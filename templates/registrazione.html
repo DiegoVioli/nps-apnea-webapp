@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Registrazione Socio - NPS Apnea</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        form p { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input { width: 300px; padding: 8px; }
+        button { background-color: #0077b6; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Diventa Socio</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Registrati</button>
+    </form>
+</body>
+</html>

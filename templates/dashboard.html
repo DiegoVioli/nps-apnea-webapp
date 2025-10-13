@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>La Tua Dashboard - NPS Apnea</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background-color: #f4f4f4; }
+        .dashboard-container { max-width: 800px; margin: auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1, h2, h3, h4 { color: #005f73; }
+        .box { border: 1px solid #ddd; padding: 20px; margin-top: 20px; border-radius: 5px; }
+        .logout-link { display: inline-block; margin-top: 30px; color: #ae2012; }
+        .pacchetto, .corso { border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        
+        <h1>Benvenuto, {{ socio.user.first_name }}!</h1>
+
+        <!-- BOX 1: STATO SOCIO -->
+        <div class="box">
+            <h2>
+                Il Tuo Stato Socio
+                <!-- NUOVO PALLINO DI STATO -->
+                <span title="{% if socio.is_in_regola %}Sei in regola{% else %}Non sei in regola{% endif %}" 
+                    style="display: inline-block; width: 15px; height: 15px; border-radius: 50%; 
+                            background-color: {% if socio.is_in_regola %}#2a9d8f{% else %}#e76f51{% endif %}; 
+                            vertical-align: middle; margin-left: 10px;">
+                </span>
+            </h2>
+            <p><strong>Stato:</strong> {{ socio.get_stato_display }}</p>
+            <p><strong>Scadenza Quota Associativa:</strong> {{ socio.scadenza_quota_sociale|date:"d-m-Y"|default:"Non definita" }}</p>
+            <p><strong>Scadenza Certificato Medico:</strong> {{ socio.scadenza_certificato_medico|date:"d-m-Y"|default:"Non definito" }}</p>
+        </div>
+
+        <!-- BOX 2: GESTIONE ABBONAMENTI ALLENAMENTO -->
+        <div class="box">
+            <h2>I Tuoi Allenamenti</h2>
+            {% if socio.abbonamento_sottoscritto %}
+                <h4>Hai sottoscritto il seguente abbonamento:</h4>
+                <div class="pacchetto">
+                    <h4>{{ socio.abbonamento_sottoscritto.pacchetto.nome }} ({{ socio.abbonamento_sottoscritto.stagione }})</h4>
+                    <p>Valido dal {{ socio.abbonamento_sottoscritto.data_inizio|date:"d-m-Y"|default:"Non definita" }} al {{ socio.abbonamento_sottoscritto.data_fine|date:"d-m-Y"|default:"Non definita" }}</p>
+                    <ul>
+                        {% for turno in socio.abbonamento_sottoscritto.pacchetto.turni.all %}
+                            <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <h4>Non hai ancora sottoscritto un abbonamento per gli allenamenti.</h4>
+                {% for abbonamento in abbonamenti_disponibili %}
+                    <div class="pacchetto">
+                        <h4>{{ abbonamento.pacchetto.nome }} ({{ abbonamento.stagione }}) - €{{ abbonamento.prezzo }}</h4>
+                        <p>Valido dal {{ abbonamento.data_inizio|date:"d-m-Y"|default:"Non definita" }} al {{ abbonamento.data_fine|date:"d-m-Y"|default:"Non definita" }}</p>
+                        <ul>
+                            {% for turno in abbonamento.pacchetto.turni.all %}
+                                <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
+                            {% endfor %}
+                        </ul>
+                        <a href="{% url 'sottoscrivi_abbonamento' abbonamento.id %}" style="font-weight: bold;">Sottoscrivi</a>
+                    </div>
+                {% empty %}
+                    <p>Al momento non ci sono offerte di abbonamento disponibili.</p>
+                {% endfor %}
+            {% endif %}
+        </div>
+
+        <!-- BOX 3: GESTIONE CORSI -->
+        <div class="box">
+            <h2>Corsi Disponibili</h2>
+            {% for edizione in edizioni_aperte %}
+                <div class="corso">
+                    <h4>{{ edizione.corso.nome }}</h4>
+                    <p><strong>Periodo:</strong> dal {{ edizione.data_inizio|date:"d-m-Y"|default:"Non definita" }} al {{ edizione.data_fine|date:"d-m-Y"|default:"Non definita" }}</p>
+                    <p><strong>Prezzo:</strong> €{{ edizione.prezzo }}</p>
+                    <a href="#" style="font-weight: bold;">Dettagli e Iscrizione</a>
+                </div>
+            {% empty %}
+                <p>Al momento non ci sono nuovi corsi a cui iscriversi.</p>
+            {% endfor %}
+        </div>
+
+        <form action="{% url 'logout' %}" method="post" style="display: inline;">
+            {% csrf_token %}
+            <button type="submit" class="logout-link" style="background: none; border: none; padding: 0; color: #ae2012; text-decoration: underline; cursor: pointer; font-size: 1em; font-family: sans-serif;">
+                Logout
+            </button>
+        </form>
+    </div>
+</body>
+</html>

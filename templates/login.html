@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Login - NPS Apnea</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        form { width: 300px; margin: 50px auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
+        button { background-color: #0077b6; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <form method="post">
+        <h1>Login</h1>
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Accedi</button>
+    </form>
+</body>
+</html>
