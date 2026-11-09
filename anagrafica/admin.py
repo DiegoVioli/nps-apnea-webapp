@@ -2,7 +2,15 @@ from django.contrib import admin
 from django.http import HttpResponse
 from django.template.loader import render_to_string
 from datetime import date, timedelta 
-from .models import Socio, TurnoAllenamento, PacchettoAbbonamento, StagioneAbbonamento, Corso, EdizioneCorso
+from .models import (
+    ConsensoSocio,
+    Socio,
+    TurnoAllenamento,
+    PacchettoAbbonamento,
+    StagioneAbbonamento,
+    Corso,
+    EdizioneCorso,
+)
 
 #Cosa fa questo codice?
 #Registra il nostro modello Socio nell'area di amministrazione.
@@ -10,11 +18,61 @@ from .models import Socio, TurnoAllenamento, PacchettoAbbonamento, StagioneAbbon
 #list_filter aggiunge un comodo filtro sulla destra per vedere subito i soci "Attivi", "Sospesi", ecc.
 #search_fields aggiunge una barra di ricerca per trovare un socio per nome, cognome, email o codice fiscale.
 
+class ConsensoSocioInline(admin.TabularInline):
+    model = ConsensoSocio
+    extra = 0
+    can_delete = False
+    fields = ("tipo", "versione_modulo", "accettato_il", "indirizzo_ip")
+    readonly_fields = fields
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_staff
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ConsensoSocio)
+class ConsensoSocioAdmin(admin.ModelAdmin):
+    list_display = (
+        "socio_display",
+        "tipo",
+        "versione_modulo",
+        "accettato_il",
+        "indirizzo_ip",
+    )
+    list_filter = ("tipo", "versione_modulo", "accettato_il")
+    search_fields = (
+        "socio__user__first_name",
+        "socio__user__last_name",
+        "socio__user__email",
+        "socio__codice_fiscale",
+    )
+    readonly_fields = ("socio", "tipo", "versione_modulo", "accettato_il", "indirizzo_ip")
+    ordering = ("-accettato_il",)
+
+    def has_add_permission(self, request):
+        return False
+
+    @admin.display(description="Socio", ordering="socio__user__last_name")
+    def socio_display(self, obj):
+        if obj.socio.user:
+            return obj.socio.user.get_full_name() or obj.socio.user.username
+        return obj.socio.codice_fiscale
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Socio)
 class SocioAdmin(admin.ModelAdmin):
     list_display = ('user', 'stato', 'scadenza_quota_sociale', 'scadenza_certificato_medico')
     list_filter = ('stato',)
     search_fields = ('user__first_name', 'user__last_name', 'user__email', 'codice_fiscale')
+    inlines = (ConsensoSocioInline,)
 
 # --- NUOVE CLASSI ADMIN PER I NUOVI MODELLI ---
 

@@ -2,91 +2,516 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>La Tua Dashboard - NPS Apnea</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>La tua area socio - NPS Apnea</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; background-color: #f4f4f4; }
-        .dashboard-container { max-width: 800px; margin: auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        h1, h2, h3, h4 { color: #005f73; }
-        .box { border: 1px solid #ddd; padding: 20px; margin-top: 20px; border-radius: 5px; }
-        .logout-link { display: inline-block; margin-top: 30px; color: #ae2012; }
-        .pacchetto, .corso { border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; border-radius: 5px; }
+        :root {
+            color-scheme: light;
+            --ink: #14324b;
+            --muted: #62768a;
+            --line: #e2eaf0;
+            --surface: #ffffff;
+            --canvas: #f3f7fa;
+            --navy: #103750;
+            --teal: #087f82;
+            --teal-dark: #06676a;
+            --success: #147d58;
+            --success-bg: #e8f6ef;
+            --warning: #a45b08;
+            --warning-bg: #fff3dc;
+            --danger: #b13d3d;
+            --danger-bg: #fff0ef;
+            --shadow: 0 12px 32px rgba(20, 50, 75, .07);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            min-width: 320px;
+            margin: 0;
+            color: var(--ink);
+            background: var(--canvas);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-size: 15px;
+            line-height: 1.55;
+        }
+
+        a { color: var(--teal-dark); }
+        a:focus-visible, button:focus-visible {
+            outline: 3px solid #53c5c1;
+            outline-offset: 3px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            min-height: 76px;
+            padding: 14px max(24px, calc((100% - 1120px) / 2));
+            background: var(--surface);
+            border-bottom: 1px solid var(--line);
+        }
+
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--ink);
+            font-weight: 750;
+            letter-spacing: .04em;
+            text-decoration: none;
+        }
+
+        .brand-mark {
+            display: grid;
+            width: 40px;
+            height: 40px;
+            place-items: center;
+            color: #fff;
+            background: var(--teal);
+            border-radius: 13px;
+            font-size: 13px;
+            letter-spacing: .03em;
+        }
+
+        .brand-caption {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+        }
+
+        .logout-form { margin: 0; }
+
+        .logout-button {
+            padding: 9px 15px;
+            color: var(--ink);
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 650;
+            transition: border-color .2s, background .2s;
+        }
+
+        .logout-button:hover { background: var(--canvas); border-color: #c6d5df; }
+
+        .page {
+            width: min(1120px, calc(100% - 40px));
+            margin: 34px auto 64px;
+        }
+
+        .welcome {
+            position: relative;
+            overflow: hidden;
+            padding: clamp(26px, 5vw, 46px);
+            color: #fff;
+            background: linear-gradient(118deg, #103750 0%, #12576a 58%, #087f82 100%);
+            border-radius: 22px;
+            box-shadow: var(--shadow);
+        }
+
+        .welcome::after {
+            position: absolute;
+            top: -110px;
+            right: -40px;
+            width: 300px;
+            height: 300px;
+            border: 1px solid rgba(255,255,255,.14);
+            border-radius: 50%;
+            box-shadow: 0 0 0 36px rgba(255,255,255,.035), 0 0 0 72px rgba(255,255,255,.025);
+            content: "";
+            pointer-events: none;
+        }
+
+        .welcome-content { position: relative; z-index: 1; }
+
+        .eyebrow {
+            margin: 0 0 8px;
+            color: #a9e3df;
+            font-size: 12px;
+            font-weight: 750;
+            letter-spacing: .13em;
+            text-transform: uppercase;
+        }
+
+        h1, h2, h3, p { margin-top: 0; }
+        h1 { margin-bottom: 8px; font-size: clamp(28px, 4vw, 38px); line-height: 1.2; }
+
+        .welcome-copy {
+            max-width: 570px;
+            margin-bottom: 0;
+            color: rgba(255,255,255,.78);
+        }
+
+        .status-pill, .detail-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            width: fit-content;
+            padding: 6px 11px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 750;
+        }
+
+        .status-pill { margin-top: 22px; color: #d7f8e8; background: rgba(12, 42, 48, .35); }
+        .status-dot { width: 8px; height: 8px; background: #73e5ad; border-radius: 50%; }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+            margin: 20px 0 30px;
+        }
+
+        .summary-card, .panel {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+        }
+
+        .summary-card { min-width: 0; padding: 20px; }
+        .summary-label { margin-bottom: 7px; color: var(--muted); font-size: 13px; font-weight: 650; }
+        .summary-value { margin-bottom: 4px; font-size: 20px; font-weight: 750; line-height: 1.3; }
+        .summary-note { margin: 0; color: var(--muted); font-size: 12px; }
+
+        .detail-badge { margin-top: 11px; }
+        .badge-good { color: var(--success); background: var(--success-bg); }
+        .badge-warning { color: var(--warning); background: var(--warning-bg); }
+        .badge-danger { color: var(--danger); background: var(--danger-bg); }
+
+        .section-heading {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 0 0 14px;
+        }
+
+        .section-heading h2 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
+        .section-heading p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+
+        .activity-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+            align-items: start;
+        }
+
+        .history-panel { grid-column: 1 / -1; }
+        .history-list {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .history-kind {
+            display: inline-flex;
+            margin-bottom: 8px;
+            padding: 4px 9px;
+            color: var(--teal-dark);
+            background: #e7f5f4;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 750;
+        }
+
+        .panel { padding: clamp(20px, 3vw, 26px); }
+        .panel-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+
+        .panel-icon {
+            display: grid;
+            flex: 0 0 42px;
+            width: 42px;
+            height: 42px;
+            place-items: center;
+            color: var(--teal-dark);
+            background: #e7f5f4;
+            border-radius: 13px;
+            font-size: 18px;
+        }
+
+        .panel-heading h2 { margin: 0; font-size: 18px; }
+        .panel-heading p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+
+        .item-list { display: grid; gap: 12px; }
+
+        .activity-item {
+            padding: 16px;
+            background: #fbfdfe;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+        }
+
+        .activity-item h3 { margin-bottom: 7px; font-size: 15px; }
+        .activity-item p { margin-bottom: 6px; color: var(--muted); font-size: 13px; }
+        .activity-item p:last-of-type { margin-bottom: 0; }
+        .activity-item ul { margin: 11px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+
+        .item-price { color: var(--ink) !important; font-weight: 700; }
+
+        .button-link {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 40px;
+            margin-top: 14px;
+            padding: 8px 13px;
+            color: #fff;
+            background: var(--teal);
+            border-radius: 9px;
+            font-size: 13px;
+            font-weight: 700;
+            text-decoration: none;
+            transition: background .2s, transform .2s;
+        }
+
+        .button-link:hover { color: #fff; background: var(--teal-dark); transform: translateY(-1px); }
+
+        .empty-state {
+            padding: 18px;
+            color: var(--muted);
+            background: #f7fafb;
+            border: 1px dashed #cbd9e1;
+            border-radius: 12px;
+            font-size: 13px;
+        }
+
+        .footer-note { margin: 25px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+        @media (max-width: 720px) {
+            .topbar { min-height: 68px; padding: 12px 20px; }
+            .page { width: min(100% - 28px, 520px); margin-top: 22px; }
+            .summary-grid { grid-template-columns: 1fr; gap: 10px; margin: 14px 0 24px; }
+            .summary-card { padding: 16px; }
+            .summary-value { font-size: 18px; }
+            .activity-grid { grid-template-columns: 1fr; gap: 14px; }
+            .history-panel { grid-column: auto; }
+            .history-list { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 420px) {
+            .brand-caption { display: none; }
+            .welcome { border-radius: 17px; }
+            .panel { padding: 18px; }
+        }
     </style>
 </head>
 <body>
-    <div class="dashboard-container">
-        
-        <h1>Benvenuto, {{ socio.user.first_name }}!</h1>
-
-        <!-- BOX 1: STATO SOCIO -->
-        <div class="box">
-            <h2>
-                Il Tuo Stato Socio
-                <!-- NUOVO PALLINO DI STATO -->
-                <span title="{% if socio.is_in_regola %}Sei in regola{% else %}Non sei in regola{% endif %}" 
-                    style="display: inline-block; width: 15px; height: 15px; border-radius: 50%; 
-                            background-color: {% if socio.is_in_regola %}#2a9d8f{% else %}#e76f51{% endif %}; 
-                            vertical-align: middle; margin-left: 10px;">
-                </span>
-            </h2>
-            <p><strong>Stato:</strong> {{ socio.get_stato_display }}</p>
-            <p><strong>Scadenza Quota Associativa:</strong> {{ socio.scadenza_quota_sociale|date:"d-m-Y"|default:"Non definita" }}</p>
-            <p><strong>Scadenza Certificato Medico:</strong> {{ socio.scadenza_certificato_medico|date:"d-m-Y"|default:"Non definito" }}</p>
-        </div>
-
-        <!-- BOX 2: GESTIONE ABBONAMENTI ALLENAMENTO -->
-        <div class="box">
-            <h2>I Tuoi Allenamenti</h2>
-            {% if socio.abbonamento_sottoscritto %}
-                <h4>Hai sottoscritto il seguente abbonamento:</h4>
-                <div class="pacchetto">
-                    <h4>{{ socio.abbonamento_sottoscritto.pacchetto.nome }} ({{ socio.abbonamento_sottoscritto.stagione }})</h4>
-                    <p>Valido dal {{ socio.abbonamento_sottoscritto.data_inizio|date:"d-m-Y"|default:"Non definita" }} al {{ socio.abbonamento_sottoscritto.data_fine|date:"d-m-Y"|default:"Non definita" }}</p>
-                    <ul>
-                        {% for turno in socio.abbonamento_sottoscritto.pacchetto.turni.all %}
-                            <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
-                        {% endfor %}
-                    </ul>
-                </div>
-            {% else %}
-                <h4>Non hai ancora sottoscritto un abbonamento per gli allenamenti.</h4>
-                {% for abbonamento in abbonamenti_disponibili %}
-                    <div class="pacchetto">
-                        <h4>{{ abbonamento.pacchetto.nome }} ({{ abbonamento.stagione }}) - €{{ abbonamento.prezzo }}</h4>
-                        <p>Valido dal {{ abbonamento.data_inizio|date:"d-m-Y"|default:"Non definita" }} al {{ abbonamento.data_fine|date:"d-m-Y"|default:"Non definita" }}</p>
-                        <ul>
-                            {% for turno in abbonamento.pacchetto.turni.all %}
-                                <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
-                            {% endfor %}
-                        </ul>
-                        <a href="{% url 'sottoscrivi_abbonamento' abbonamento.id %}" style="font-weight: bold;">Sottoscrivi</a>
-                    </div>
-                {% empty %}
-                    <p>Al momento non ci sono offerte di abbonamento disponibili.</p>
-                {% endfor %}
-            {% endif %}
-        </div>
-
-        <!-- BOX 3: GESTIONE CORSI -->
-        <div class="box">
-            <h2>Corsi Disponibili</h2>
-            {% for edizione in edizioni_aperte %}
-                <div class="corso">
-                    <h4>{{ edizione.corso.nome }}</h4>
-                    <p><strong>Periodo:</strong> dal {{ edizione.data_inizio|date:"d-m-Y"|default:"Non definita" }} al {{ edizione.data_fine|date:"d-m-Y"|default:"Non definita" }}</p>
-                    <p><strong>Prezzo:</strong> €{{ edizione.prezzo }}</p>
-                    <a href="#" style="font-weight: bold;">Dettagli e Iscrizione</a>
-                </div>
-            {% empty %}
-                <p>Al momento non ci sono nuovi corsi a cui iscriversi.</p>
-            {% endfor %}
-        </div>
-
-        <form action="{% url 'logout' %}" method="post" style="display: inline;">
+    {% now "Y-m-d" as oggi %}
+    <header class="topbar">
+        <a class="brand" href="{% url 'dashboard' %}" aria-label="NPS Apnea, area socio">
+            <span class="brand-mark" aria-hidden="true">NPS</span>
+            <span>
+                NPS Apnea
+                <span class="brand-caption">Area socio</span>
+            </span>
+        </a>
+        <form class="logout-form" action="{% url 'logout' %}" method="post">
             {% csrf_token %}
-            <button type="submit" class="logout-link" style="background: none; border: none; padding: 0; color: #ae2012; text-decoration: underline; cursor: pointer; font-size: 1em; font-family: sans-serif;">
-                Logout
-            </button>
+            <button class="logout-button" type="submit">Esci</button>
         </form>
-    </div>
+    </header>
+
+    <main class="page">
+        <section class="welcome" aria-labelledby="welcome-title">
+            <div class="welcome-content">
+                <p class="eyebrow">La tua area personale</p>
+                <h1 id="welcome-title">
+                    Ciao, {% if socio.user.first_name %}{{ socio.user.first_name }}{% else %}{{ socio.user.username }}{% endif %}!
+                </h1>
+                <p class="welcome-copy">
+                    Qui trovi lo stato della tua iscrizione e le attività disponibili.
+                </p>
+                <span class="status-pill">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    {% if socio.is_in_regola %}Socio in regola{% else %}Posizione da verificare{% endif %}
+                </span>
+            </div>
+        </section>
+
+        <section class="summary-grid" aria-label="Riepilogo socio">
+            <article class="summary-card">
+                <p class="summary-label">Stato iscrizione</p>
+                <p class="summary-value">{{ socio.get_stato_display }}</p>
+                {% if socio.is_in_regola %}
+                    <span class="detail-badge badge-good">In regola</span>
+                {% else %}
+                    <span class="detail-badge badge-warning">Da verificare</span>
+                {% endif %}
+            </article>
+
+            <article class="summary-card">
+                <p class="summary-label">Certificato medico</p>
+                {% if not socio.scadenza_certificato_medico %}
+                    <p class="summary-value">Non registrato</p>
+                    <span class="detail-badge badge-warning">Contatta la segreteria</span>
+                {% elif socio.scadenza_certificato_medico|date:"Y-m-d" < oggi %}
+                    <p class="summary-value">{{ socio.scadenza_certificato_medico|date:"d/m/Y" }}</p>
+                    <span class="detail-badge badge-danger">Scaduto · non puoi entrare in acqua</span>
+                {% else %}
+                    <p class="summary-value">{{ socio.scadenza_certificato_medico|date:"d/m/Y" }}</p>
+                    <span class="detail-badge badge-good">Valido</span>
+                {% endif %}
+            </article>
+
+            <article class="summary-card">
+                <p class="summary-label">Quota associativa</p>
+                {% if socio.scadenza_quota_sociale %}
+                    <p class="summary-value">{{ socio.scadenza_quota_sociale|date:"d/m/Y" }}</p>
+                    {% if socio.scadenza_quota_sociale|date:"Y-m-d" < oggi %}
+                        <span class="detail-badge badge-warning">Da rinnovare</span>
+                    {% else %}
+                        <span class="detail-badge badge-good">Valida</span>
+                    {% endif %}
+                {% else %}
+                    <p class="summary-value">Non definita</p>
+                    <span class="detail-badge badge-warning">Contatta la segreteria</span>
+                {% endif %}
+            </article>
+        </section>
+
+        <div class="section-heading">
+            <div>
+                <h2>Le tue attività</h2>
+                <p>Gestisci i tuoi allenamenti e scopri i corsi disponibili.</p>
+            </div>
+        </div>
+
+        <div class="activity-grid">
+            <section class="panel" aria-labelledby="training-title">
+                <div class="panel-heading">
+                    <span class="panel-icon" aria-hidden="true">↗</span>
+                    <div>
+                        <h2 id="training-title">Allenamenti</h2>
+                        <p>Il tuo abbonamento e i prossimi turni</p>
+                    </div>
+                </div>
+
+                {% if abbonamento_attivo %}
+                    <div class="activity-item">
+                        <h3>{{ abbonamento_attivo.pacchetto.nome }}</h3>
+                        <p>{{ abbonamento_attivo.stagione }}</p>
+                        <p>
+                            Valido dal
+                            {{ abbonamento_attivo.data_inizio|date:"d/m/Y"|default:"Non definito" }}
+                            al
+                            {{ abbonamento_attivo.data_fine|date:"d/m/Y"|default:"Non definito" }}
+                        </p>
+                        {% with turni=abbonamento_attivo.pacchetto.turni.all %}
+                            {% if turni %}
+                                <ul>
+                                    {% for turno in turni %}
+                                        <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
+                        {% endwith %}
+                    </div>
+                {% else %}
+                    {% for abbonamento in abbonamenti_disponibili %}
+                        <article class="activity-item">
+                            <h3>{{ abbonamento.pacchetto.nome }}</h3>
+                            <p>{{ abbonamento.stagione }}</p>
+                            <p>
+                                Valido dal {{ abbonamento.data_inizio|date:"d/m/Y" }}
+                                al {{ abbonamento.data_fine|date:"d/m/Y" }}
+                            </p>
+                            <p class="item-price">€ {{ abbonamento.prezzo }}</p>
+                            <ul>
+                                {% for turno in abbonamento.pacchetto.turni.all %}
+                                    <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
+                                {% endfor %}
+                            </ul>
+                            <a class="button-link" href="{% url 'sottoscrivi_abbonamento' abbonamento.id %}">
+                                Sottoscrivi abbonamento
+                            </a>
+                        </article>
+                    {% empty %}
+                        <p class="empty-state">Al momento non ci sono offerte di abbonamento disponibili.</p>
+                    {% endfor %}
+                {% endif %}
+            </section>
+
+            <section class="panel" aria-labelledby="courses-title">
+                <div class="panel-heading">
+                    <span class="panel-icon" aria-hidden="true">◎</span>
+                    <div>
+                        <h2 id="courses-title">Corsi disponibili</h2>
+                        <p>Le prossime edizioni aperte alle iscrizioni</p>
+                    </div>
+                </div>
+
+                <div class="item-list">
+                    {% for edizione in edizioni_aperte %}
+                        <article class="activity-item">
+                            <h3>{{ edizione.corso.nome }}</h3>
+                            <p>{{ edizione.corso.descrizione }}</p>
+                            <p>
+                                Dal {{ edizione.data_inizio|date:"d/m/Y"|default:"Non definito" }}
+                                al {{ edizione.data_fine|date:"d/m/Y"|default:"Non definito" }}
+                            </p>
+                            <p class="item-price">€ {{ edizione.prezzo }}</p>
+                            <a class="button-link" href="#">
+                                Dettagli e iscrizione
+                            </a>
+                        </article>
+                    {% empty %}
+                        <p class="empty-state">Al momento non ci sono nuovi corsi a cui iscriverti.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="panel history-panel" aria-labelledby="history-title">
+            <div class="panel-heading">
+                <span class="panel-icon" aria-hidden="true">↺</span>
+                <div>
+                    <h2 id="history-title">Storico iscrizioni</h2>
+                    <p>I corsi e gli abbonamenti stagionali che hai completato</p>
+                </div>
+            </div>
+
+            <div class="history-list">
+                {% for iscrizione in iscrizioni_storiche_abbonamenti %}
+                    <article class="activity-item">
+                        <span class="history-kind">Allenamento</span>
+                        <h3>{{ iscrizione.abbonamento.pacchetto.nome }}</h3>
+                        <p>{{ iscrizione.abbonamento.stagione }}</p>
+                        <p>
+                            Dal {{ iscrizione.abbonamento.data_inizio|date:"d/m/Y" }}
+                            al {{ iscrizione.abbonamento.data_fine|date:"d/m/Y" }}
+                        </p>
+                    </article>
+                {% endfor %}
+
+                {% for edizione in iscrizioni_storiche_corsi %}
+                    <article class="activity-item">
+                        <span class="history-kind">Corso</span>
+                        <h3>{{ edizione.corso.nome }}</h3>
+                        <p>
+                            Dal {{ edizione.data_inizio|date:"d/m/Y" }}
+                            al {{ edizione.data_fine|date:"d/m/Y" }}
+                        </p>
+                        <p>{{ edizione.get_stato_display }}</p>
+                    </article>
+                {% endfor %}
+
+                {% if not iscrizioni_storiche_abbonamenti and not iscrizioni_storiche_corsi %}
+                    <p class="empty-state" style="grid-column: 1 / -1;">
+                        Non hai ancora iscrizioni concluse da visualizzare.
+                    </p>
+                {% endif %}
+            </div>
+            </section>
+        </div>
+
+        <p class="footer-note">Per aggiornare i tuoi dati o ricevere assistenza, contatta la segreteria NPS Apnea.</p>
+    </main>
 </body>
 </html>

@@ -18,13 +18,20 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from django.contrib.auth import views as auth_views # Importiamo le view di auth
-from anagrafica.views import homepage, registrazione_socio, dashboard, sottoscrivi_abbonamento
+from anagrafica.views import (
+    consensi_socio,
+    dashboard,
+    homepage,
+    registrazione_socio,
+    sottoscrivi_abbonamento,
+)
 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', homepage, name='homepage'), 
     path('registrazione/', registrazione_socio, name='registrazione'),
+    path('consensi/', consensi_socio, name='consensi'),
 
     path('dashboard/', dashboard, name='dashboard'),
     path('login/', auth_views.LoginView.as_view(template_name='login.html'), name='login'),

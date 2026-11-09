@@ -2,19 +2,48 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>Login - NPS Apnea</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; }
-        form { width: 300px; margin: 50px auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
-        button { background-color: #0077b6; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Accedi | NPS Apnea</title>
+    {% include "includes/public_styles.html" %}
 </head>
 <body>
-    <form method="post">
-        <h1>Login</h1>
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Accedi</button>
-    </form>
+    <header class="topbar">
+        <a class="brand" href="{% url 'homepage' %}" aria-label="NPS Apnea, home">
+            <span class="brand-mark" aria-hidden="true">NPS</span>
+            <span>
+                NPS Apnea
+                <span class="brand-caption">Area soci</span>
+            </span>
+        </a>
+        <a class="topbar-link" href="{% url 'registrazione' %}">Diventa socio</a>
+    </header>
+
+    <main class="page">
+        <div class="auth-layout">
+            <section class="auth-intro">
+                <p class="eyebrow" style="color: var(--teal);">Bentornato</p>
+                <h1>Ritrova il tuo spazio in acqua.</h1>
+                <p>Accedi alla tua area personale per consultare lo stato della tua iscrizione e le attività del club.</p>
+            </section>
+
+            <section class="auth-card" aria-labelledby="login-title">
+                <h2 id="login-title">Accedi all’area soci</h2>
+                <p class="auth-caption">Inserisci le credenziali del tuo account.</p>
+                <form class="auth-form" method="post">
+                    {% csrf_token %}
+                    {% if form.non_field_errors %}
+                        <div class="form-errors" role="alert">{{ form.non_field_errors }}</div>
+                    {% endif %}
+                    {{ form.as_p }}
+                    <button class="primary-button" type="submit">Accedi</button>
+                </form>
+                <p class="auth-switch">
+                    Non hai ancora un account?
+                    <a class="text-link" href="{% url 'registrazione' %}">Diventa socio</a>
+                </p>
+            </section>
+        </div>
+        <p class="footer-note"><a class="text-link" href="{% url 'homepage' %}">Torna alla home</a></p>
+    </main>
 </body>
 </html>

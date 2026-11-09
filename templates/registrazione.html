@@ -2,21 +2,56 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>Registrazione Socio - NPS Apnea</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; }
-        form p { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; }
-        input { width: 300px; padding: 8px; }
-        button { background-color: #0077b6; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Diventa socio | NPS Apnea</title>
+    {% include "includes/public_styles.html" %}
 </head>
 <body>
-    <h1>Diventa Socio</h1>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Registrati</button>
-    </form>
+    <header class="topbar">
+        <a class="brand" href="{% url 'homepage' %}" aria-label="NPS Apnea, home">
+            <span class="brand-mark" aria-hidden="true">NPS</span>
+            <span>
+                NPS Apnea
+                <span class="brand-caption">Unisciti al club</span>
+            </span>
+        </a>
+        <a class="topbar-link" href="{% url 'login' %}">Hai già un account? Accedi</a>
+    </header>
+
+    <main class="page">
+        <div class="auth-layout">
+            <section class="auth-intro">
+                <p class="eyebrow" style="color: var(--teal);">Benvenuto a bordo</p>
+                <h1>Inizia la tua avventura con NPS Apnea.</h1>
+                <p>Crea il tuo account per entrare nella comunità e scoprire le attività del club.</p>
+            </section>
+
+            <section class="auth-card" aria-labelledby="registration-title">
+                <h2 id="registration-title">Crea il tuo account</h2>
+                <p class="auth-caption">Compila i tuoi dati per registrarti come socio.</p>
+                {% if not documenti_configurati %}
+                    <p class="form-warning" role="status">
+                        I PDF ufficiali sono in preparazione. Puoi registrarti e confermare
+                        versioni provvisorie per test; non sostituiscono i consensi informati
+                        sui documenti approvati. Quando i PDF e le versioni definitive saranno
+                        pubblicati, ti chiederemo di accettarli nuovamente.
+                    </p>
+                {% endif %}
+                <form class="auth-form" method="post">
+                    {% csrf_token %}
+                    {% if form.non_field_errors %}
+                        <div class="form-errors" role="alert">{{ form.non_field_errors }}</div>
+                    {% endif %}
+                    {{ form.as_p }}
+                    <button class="primary-button" type="submit">Crea account</button>
+                </form>
+                <p class="auth-switch">
+                    Hai già un account?
+                    <a class="text-link" href="{% url 'login' %}">Accedi</a>
+                </p>
+            </section>
+        </div>
+        <p class="footer-note"><a class="text-link" href="{% url 'homepage' %}">Torna alla home</a></p>
+    </main>
 </body>
 </html>

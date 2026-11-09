@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -124,3 +125,33 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGIN_REDIRECT_URL = '/dashboard/'
 LOGOUT_REDIRECT_URL = '/'
+
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "25"))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "").lower() in {"1", "true", "yes"}
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "").lower() in {"1", "true", "yes"}
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "webmaster@localhost")
+
+DOCUMENTI_CONSENSO = {
+    "regolamento": {
+        "versione": os.environ.get(
+            "CONSENSO_REGOLAMENTO_VERSIONE", "PROVVISORIA"
+        ),
+        "url": os.environ.get("CONSENSO_REGOLAMENTO_URL", ""),
+    },
+    "privacy": {
+        "versione": os.environ.get("CONSENSO_PRIVACY_VERSIONE", "PROVVISORIA"),
+        "url": os.environ.get("CONSENSO_PRIVACY_URL", ""),
+    },
+    "foto_video": {
+        "versione": os.environ.get(
+            "CONSENSO_FOTO_VIDEO_VERSIONE", "PROVVISORIA"
+        ),
+        "url": os.environ.get("CONSENSO_FOTO_VIDEO_URL", ""),
+    },
+}

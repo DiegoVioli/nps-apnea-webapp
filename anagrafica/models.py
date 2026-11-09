@@ -3,6 +3,7 @@
 from datetime import date
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 # DEFINIZIONE 1: SOCIO
 class Socio(models.Model):
@@ -19,7 +20,6 @@ class Socio(models.Model):
     data_iscrizione = models.DateField(auto_now_add=True)
     scadenza_quota_sociale = models.DateField(null=True, blank=True)
     scadenza_certificato_medico = models.DateField(null=True, blank=True)
-    file_certificato_medico = models.FileField(upload_to='certificati/', null=True, blank=True)
     brevetti = models.TextField(blank=True, help_text="Elenco brevetti conseguiti, separati da virgola")
     
     # RELAZIONE CORRETTA CON STRINGA
@@ -52,6 +52,52 @@ class Socio(models.Model):
     class Meta:
         verbose_name = "Socio"
         verbose_name_plural = "Soci"
+
+
+class ConsensoSocio(models.Model):
+    TIPI = [
+        ("REGOLAMENTO", "Regolamento ASD"),
+        ("PRIVACY", "Trattamento dati personali"),
+        ("FOTO_VIDEO", "Foto e video"),
+    ]
+
+    socio = models.ForeignKey(
+        Socio, on_delete=models.CASCADE, related_name="consensi"
+    )
+    tipo = models.CharField(max_length=20, choices=TIPI)
+    versione_modulo = models.CharField(max_length=50)
+    accettato_il = models.DateTimeField()
+    indirizzo_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("tipo", "-accettato_il")
+        indexes = [
+            models.Index(fields=("socio", "tipo", "-accettato_il")),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} v{self.versione_modulo} - {self.socio}"
+
+
+class PromemoriaCertificato(models.Model):
+    socio = models.ForeignKey(
+        Socio, on_delete=models.CASCADE, related_name="promemoria_certificati"
+    )
+    scadenza_certificato = models.DateField()
+    ultima_email_inviata = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("socio", "scadenza_certificato"),
+                name="unique_socio_certificato_reminder",
+            )
+        ]
+
+
+class RiepilogoCertificatiAmministratori(models.Model):
+    ultima_email_inviata = models.DateTimeField(null=True, blank=True)
+
 
 # DEFINIZIONE 2: TURNO ALLENAMENTO
 class TurnoAllenamento(models.Model):
@@ -105,6 +151,25 @@ class StagioneAbbonamento(models.Model):
         verbose_name = "Offerta Abbonamento Stagionale"
         verbose_name_plural = "Offerte Abbonamenti Stagionali"
 
+
+class IscrizioneAbbonamento(models.Model):
+    socio = models.ForeignKey(
+        Socio, on_delete=models.CASCADE, related_name="iscrizioni_abbonamento"
+    )
+    abbonamento = models.ForeignKey(
+        StagioneAbbonamento, on_delete=models.CASCADE, related_name="iscrizioni_soci"
+    )
+    data_iscrizione = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("socio", "abbonamento"),
+                name="unique_socio_abbonamento",
+            )
+        ]
+
+
 # DEFINIZIONE 5: CORSO
 class Corso(models.Model):
     nome = models.CharField(max_length=150)
@@ -136,6 +201,14 @@ class EdizioneCorso(models.Model):
 
     def __str__(self):
         return f"{self.corso.nome} - dal {self.data_inizio}"
+
+    def save(self, *args, **kwargs):
+        if self.data_fine < timezone.localdate() and self.stato != "ANNULLATO":
+            self.stato = "CONCLUSO"
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = {*update_fields, "stato"}
+        super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = "Edizione di un Corso"
