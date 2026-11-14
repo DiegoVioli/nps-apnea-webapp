@@ -97,6 +97,16 @@ class StagioneAbbonamento(models.Model):
     data_inizio = models.DateField()
     data_fine = models.DateField()
     attivo = models.BooleanField(default=True, help_text="Se attivo, questa offerta stagionale è acquistabile")
+    mostra_in_homepage = models.BooleanField(
+        default=False,
+        verbose_name="Mostra in homepage",
+        help_text="Se attivo, l'offerta acquistabile viene mostrata nella homepage pubblica",
+    )
+    mostra_prezzo_in_homepage = models.BooleanField(
+        default=False,
+        verbose_name="Mostra prezzo in homepage",
+        help_text="Mostra il prezzo in homepage solo se l'offerta è visibile",
+    )
 
     def __str__(self):
         return f"{self.pacchetto.nome} ({self.stagione})"

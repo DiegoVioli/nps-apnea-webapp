@@ -35,7 +35,15 @@ class PacchettoAbbonamentoAdmin(admin.ModelAdmin):
 # Per gestire le "offerte stagionali" che i soci acquistano
 @admin.register(StagioneAbbonamento)
 class StagioneAbbonamentoAdmin(admin.ModelAdmin):
-    list_display = ('__str__', 'prezzo', 'data_inizio', 'data_fine', 'attivo')
+    list_display = (
+        '__str__',
+        'prezzo',
+        'data_inizio',
+        'data_fine',
+        'attivo',
+        'mostra_in_homepage',
+        'mostra_prezzo_in_homepage',
+    )
     list_filter = ('attivo', 'stagione', 'pacchetto')
 
 # Per gestire il "catalogo" dei corsi

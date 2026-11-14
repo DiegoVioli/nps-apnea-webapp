@@ -23,6 +23,21 @@
 
     <br>
 
+    {% if offerte_in_evidenza %}
+        <section>
+            <h2>Offerte abbonamento</h2>
+            {% for offerta in offerte_in_evidenza %}
+                <article>
+                    <h3>{{ offerta.pacchetto.nome }} - {{ offerta.stagione }}</h3>
+                    <p>Valido dal {{ offerta.data_inizio|date:"d-m-Y" }} al {{ offerta.data_fine|date:"d-m-Y" }}</p>
+                    {% if offerta.mostra_prezzo_in_homepage %}
+                        <p>Prezzo: €{{ offerta.prezzo }}</p>
+                    {% endif %}
+                </article>
+            {% endfor %}
+        </section>
+    {% endif %}
+
     <div class="actions">
         
         {% if user.is_authenticated %}
