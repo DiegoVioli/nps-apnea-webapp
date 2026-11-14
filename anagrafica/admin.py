@@ -10,6 +10,9 @@ from .models import (
     StagioneAbbonamento,
     Corso,
     EdizioneCorso,
+    ModificaScadenzaCertificato,
+    RichiestaInformazioni,
+    RichiestaInformazioni,
 )
 
 #Cosa fa questo codice?
@@ -61,6 +64,68 @@ class ConsensoSocioAdmin(admin.ModelAdmin):
         return obj.socio.codice_fiscale
 
     def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ModificaScadenzaCertificato)
+class ModificaScadenzaCertificatoAdmin(admin.ModelAdmin):
+    list_display = (
+        "socio",
+        "scadenza_precedente",
+        "nuova_scadenza",
+        "modificato_il",
+        "modificato_da",
+    )
+    list_filter = ("modificato_il",)
+    search_fields = ("socio__user__first_name", "socio__user__last_name")
+    readonly_fields = (
+        "socio",
+        "scadenza_precedente",
+        "nuova_scadenza",
+        "modificato_il",
+        "modificato_da",
+    )
+    ordering = ("-modificato_il",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(RichiestaInformazioni)
+class RichiestaInformazioniAdmin(admin.ModelAdmin):
+    list_display = (
+        "nome",
+        "email",
+        "tipo_attivita",
+        "nome_attivita",
+        "creata_il",
+        "email_notificata_il",
+    )
+    list_filter = ("tipo_attivita", "creata_il", "email_notificata_il")
+    search_fields = ("nome", "email", "nome_attivita", "messaggio")
+    readonly_fields = (
+        "tipo_attivita",
+        "nome_attivita",
+        "edizione_corso",
+        "abbonamento",
+        "nome",
+        "email",
+        "messaggio",
+        "creata_il",
+        "email_notificata_il",
+    )
+    ordering = ("-creata_il",)
+
+    def has_add_permission(self, request):
         return False
 
     def has_delete_permission(self, request, obj=None):

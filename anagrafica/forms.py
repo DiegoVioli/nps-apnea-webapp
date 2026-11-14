@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.utils.html import format_html
@@ -39,8 +39,11 @@ class ModuloConsensiMixin:
             self.campi_consenso[tipo] = nome_campo
 
 class SocioRegistrationForm(ModuloConsensiMixin, UserCreationForm):
-    codice_fiscale = forms.CharField(max_length=16)
-    data_nascita = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
+    codice_fiscale = forms.CharField(max_length=16, label="Codice fiscale")
+    data_nascita = forms.DateField(
+        label="Data di nascita",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
     
     class Meta(UserCreationForm.Meta):
         model = User
@@ -48,10 +51,50 @@ class SocioRegistrationForm(ModuloConsensiMixin, UserCreationForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        etichette = {
+            "username": "Nome utente",
+            "password1": "Password",
+            "password2": "Conferma password",
+            "first_name": "Nome",
+            "last_name": "Cognome",
+            "email": "Indirizzo email",
+        }
+        for nome_campo, etichetta in etichette.items():
+            self.fields[nome_campo].label = etichetta
         self.aggiungi_campi_consenso()
+
+
+class SocioLoginForm(AuthenticationForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["username"].label = "Nome utente"
+        self.fields["password"].label = "Password"
 
 
 class ConsensoSocioForm(ModuloConsensiMixin, forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.aggiungi_campi_consenso()
+
+
+class AggiornaScadenzaCertificatoForm(forms.Form):
+    nuova_scadenza = forms.DateField(
+        label="Nuova scadenza",
+        widget=forms.DateInput(attrs={"type": "date"}),
+        error_messages={"required": "Inserisci una data di scadenza."},
+    )
+
+
+class RichiestaInformazioniForm(forms.Form):
+    nome = forms.CharField(
+        label="Nome",
+        max_length=100,
+    )
+    email = forms.EmailField(
+        label="Email",
+    )
+    messaggio = forms.CharField(
+        label="Come possiamo aiutarti?",
+        max_length=2000,
+        widget=forms.Textarea(attrs={"rows": 5}),
+    )

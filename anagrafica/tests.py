@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 import smtplib
 from unittest.mock import patch
 
@@ -10,16 +11,20 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from .forms import SocioLoginForm, SocioRegistrationForm
 from .models import (
     ConsensoSocio,
     Corso,
     EdizioneCorso,
     IscrizioneAbbonamento,
+    ModificaScadenzaCertificato,
     PromemoriaCertificato,
+    RichiestaInformazioni,
     RiepilogoCertificatiAmministratori,
     Socio,
     StagioneAbbonamento,
     PacchettoAbbonamento,
+    TurnoAllenamento,
 )
 
 DOCUMENTI_CONSENSO_TEST = {
@@ -27,6 +32,270 @@ DOCUMENTI_CONSENSO_TEST = {
     "privacy": {"versione": "2.1", "url": "/privacy.pdf"},
     "foto_video": {"versione": "1.2", "url": "/foto-video.pdf"},
 }
+
+
+class ModuliInItalianoTests(TestCase):
+    def test_registration_fields_have_italian_labels(self):
+        form = SocioRegistrationForm()
+
+        self.assertEqual(form.fields["username"].label, "Nome utente")
+        self.assertEqual(form.fields["password1"].label, "Password")
+        self.assertEqual(form.fields["password2"].label, "Conferma password")
+        self.assertEqual(form.fields["first_name"].label, "Nome")
+        self.assertEqual(form.fields["last_name"].label, "Cognome")
+        self.assertEqual(form.fields["email"].label, "Indirizzo email")
+        self.assertEqual(form.fields["codice_fiscale"].label, "Codice fiscale")
+        self.assertEqual(form.fields["data_nascita"].label, "Data di nascita")
+
+    def test_login_fields_have_italian_labels(self):
+        form = SocioLoginForm()
+
+        self.assertEqual(form.fields["username"].label, "Nome utente")
+        self.assertEqual(form.fields["password"].label, "Password")
+
+
+@override_settings(CERTIFICATI_API_TOKEN="token-di-test")
+class ApiPromemoriaTests(TestCase):
+    def crea_socio(self, username, scadenza, stato="ATTIVO"):
+        user = User.objects.create_user(
+            username=username,
+            email=f"{username}@example.com",
+            first_name="Nome",
+            last_name=username.title(),
+        )
+        return Socio.objects.create(
+            user=user,
+            codice_fiscale=f"API{Socio.objects.count():013d}",
+            data_nascita=timezone.localdate() - timedelta(days=365 * 30),
+            scadenza_certificato_medico=scadenza,
+            stato=stato,
+        )
+
+    def get_api(self):
+        return self.client.get(
+            reverse("api_candidati_promemoria"),
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+
+    def test_api_requires_token(self):
+        response = self.client.get(reverse("api_candidati_promemoria"))
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_candidates_include_only_active_members_with_expired_or_near_expiry(self):
+        oggi = timezone.localdate()
+        scaduto = self.crea_socio("scaduto", oggi - timedelta(days=2))
+        in_scadenza = self.crea_socio("in_scadenza", oggi + timedelta(days=10))
+        self.crea_socio("lontano", oggi + timedelta(days=31))
+        self.crea_socio(
+            "sospeso",
+            oggi + timedelta(days=5),
+            stato="SOSPESO",
+        )
+        self.crea_socio("senza_certificato", None)
+
+        response = self.get_api()
+
+        self.assertEqual(response.status_code, 200)
+        soci = response.json()["soci"]
+        self.assertEqual(
+            {socio["socio_id"] for socio in soci},
+            {scaduto.pk, in_scadenza.pk},
+        )
+        self.assertEqual(
+            {socio["stato_certificato"] for socio in soci},
+            {"scaduto", "in_scadenza"},
+        )
+
+    def test_candidates_exclude_members_not_yet_due_for_another_reminder(self):
+        socio = self.crea_socio(
+            "promemoria_recente",
+            timezone.localdate() + timedelta(days=10),
+        )
+        PromemoriaCertificato.objects.create(
+            socio=socio,
+            scadenza_certificato=socio.scadenza_certificato_medico,
+            ultima_email_inviata=timezone.now() - timedelta(days=2),
+        )
+
+        response = self.get_api()
+
+        self.assertEqual(response.json()["soci"], [])
+
+    def test_report_records_send_time_and_is_idempotent_for_recent_reminders(self):
+        socio = self.crea_socio(
+            "notifica",
+            timezone.localdate() + timedelta(days=10),
+        )
+        payload = {
+            "inviati": [
+                {
+                    "socio_id": socio.pk,
+                    "data_scadenza": socio.scadenza_certificato_medico.isoformat(),
+                }
+            ]
+        }
+
+        prima_risposta = self.client.post(
+            reverse("api_registra_promemoria_inviati"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+        prima_data = PromemoriaCertificato.objects.get(socio=socio).ultima_email_inviata
+        seconda_risposta = self.client.post(
+            reverse("api_registra_promemoria_inviati"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+
+        self.assertEqual(prima_risposta.status_code, 200)
+        self.assertEqual(prima_risposta.json()["registrati"], 1)
+        self.assertEqual(seconda_risposta.status_code, 200)
+        self.assertEqual(seconda_risposta.json()["gia_registrati"], 1)
+        self.assertEqual(
+            PromemoriaCertificato.objects.get(socio=socio).ultima_email_inviata,
+            prima_data,
+        )
+
+    def test_report_rejects_stale_certificate_without_partial_updates(self):
+        attivo = self.crea_socio(
+            "attivo",
+            timezone.localdate() + timedelta(days=10),
+        )
+        sospeso = self.crea_socio(
+            "sospeso_report",
+            timezone.localdate() + timedelta(days=10),
+            stato="SOSPESO",
+        )
+        payload = {
+            "inviati": [
+                {
+                    "socio_id": attivo.pk,
+                    "data_scadenza": attivo.scadenza_certificato_medico.isoformat(),
+                },
+                {
+                    "socio_id": sospeso.pk,
+                    "data_scadenza": sospeso.scadenza_certificato_medico.isoformat(),
+                },
+            ]
+        }
+
+        response = self.client.post(
+            reverse("api_registra_promemoria_inviati"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(PromemoriaCertificato.objects.count(), 0)
+
+    def test_staff_page_is_staff_only_and_shows_active_expired_members(self):
+        socio = self.crea_socio(
+            "socio_staff",
+            timezone.localdate() - timedelta(days=1),
+        )
+        url = reverse("pagina_staff_certificati")
+
+        risposta_anonima = self.client.get(url)
+        self.assertRedirects(risposta_anonima, f"{reverse('login')}?next={url}")
+
+        user = User.objects.create_user(username="utente")
+        self.client.force_login(user)
+        self.assertEqual(self.client.get(url).status_code, 403)
+
+        staff = User.objects.create_user(username="staff", is_staff=True)
+        self.client.force_login(staff)
+        risposta_staff = self.client.get(url)
+
+        self.assertEqual(risposta_staff.status_code, 200)
+        self.assertContains(risposta_staff, socio.user.email)
+        self.assertContains(risposta_staff, "Scaduto")
+        self.assertContains(
+            risposta_staff,
+            f'href="{reverse("admin:index")}"',
+        )
+
+    def test_staff_can_update_expiry_and_change_is_audited(self):
+        scadenza_precedente = timezone.localdate() - timedelta(days=1)
+        socio = self.crea_socio("scadenza_da_aggiornare", scadenza_precedente)
+        staff = User.objects.create_user(username="staff_modifica", is_staff=True)
+        self.client.force_login(staff)
+        nuova_scadenza = timezone.localdate() + timedelta(days=365)
+
+        response = self.client.post(
+            reverse("modifica_scadenza_certificato", args=(socio.pk,)),
+            {"nuova_scadenza": nuova_scadenza.isoformat()},
+        )
+
+        self.assertRedirects(response, reverse("pagina_staff_certificati"))
+        socio.refresh_from_db()
+        self.assertEqual(socio.scadenza_certificato_medico, nuova_scadenza)
+        modifica = ModificaScadenzaCertificato.objects.get(socio=socio)
+        self.assertEqual(modifica.scadenza_precedente, scadenza_precedente)
+        self.assertEqual(modifica.nuova_scadenza, nuova_scadenza)
+        self.assertEqual(modifica.modificato_da, staff)
+        self.assertIsNotNone(modifica.modificato_il)
+
+    def test_non_staff_cannot_update_certificate_expiry(self):
+        scadenza_precedente = timezone.localdate() - timedelta(days=1)
+        socio = self.crea_socio("scadenza_non_staff", scadenza_precedente)
+        user = User.objects.create_user(username="utente_modifica")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("modifica_scadenza_certificato", args=(socio.pk,)),
+            {"nuova_scadenza": timezone.localdate().isoformat()},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        socio.refresh_from_db()
+        self.assertEqual(socio.scadenza_certificato_medico, scadenza_precedente)
+        self.assertFalse(ModificaScadenzaCertificato.objects.exists())
+
+    def test_invalid_expiry_date_does_not_change_or_audit_certificate(self):
+        scadenza_precedente = timezone.localdate() - timedelta(days=1)
+        socio = self.crea_socio("scadenza_non_valida", scadenza_precedente)
+        staff = User.objects.create_user(username="staff_data_errata", is_staff=True)
+        self.client.force_login(staff)
+
+        response = self.client.post(
+            reverse("modifica_scadenza_certificato", args=(socio.pk,)),
+            {"nuova_scadenza": "data-non-valida"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response,
+            "Inserisci una data valida.",
+            status_code=400,
+        )
+        socio.refresh_from_db()
+        self.assertEqual(socio.scadenza_certificato_medico, scadenza_precedente)
+        self.assertFalse(ModificaScadenzaCertificato.objects.exists())
+
+    def test_admin_navigation_link_is_visible_only_to_staff(self):
+        url_admin = reverse("admin:index")
+        self.assertNotContains(
+            self.client.get(reverse("homepage")),
+            f'href="{url_admin}"',
+        )
+
+        user = User.objects.create_user(username="utente_nav")
+        self.client.force_login(user)
+        self.assertNotContains(
+            self.client.get(reverse("homepage")),
+            f'href="{url_admin}"',
+        )
+
+        staff = User.objects.create_user(username="staff_nav", is_staff=True)
+        self.client.force_login(staff)
+        self.assertContains(
+            self.client.get(reverse("homepage")),
+            f'href="{url_admin}"',
+        )
 
 
 class PromemoriaCertificatoTests(TestCase):
@@ -476,6 +745,257 @@ class PublicPageStyleTests(TestCase):
                 self.assertContains(response, heading)
                 self.assertContains(response, "--teal: #087f82")
                 self.assertContains(response, 'name="viewport"')
+
+
+class HomepageActivitiesTests(TestCase):
+    def test_anonymous_homepage_shows_only_open_courses_and_active_training_offers(self):
+        oggi = timezone.localdate()
+        corso_aperto = Corso.objects.create(
+            nome="Corso apnea base",
+            descrizione="Introduzione all'apnea in sicurezza.",
+        )
+        EdizioneCorso.objects.create(
+            corso=corso_aperto,
+            data_inizio=oggi + timedelta(days=7),
+            data_fine=oggi + timedelta(days=30),
+            posti_massimi=12,
+            prezzo="120.00",
+            stato="APERTO_ISCRIZIONI",
+        )
+        corso_annullato = Corso.objects.create(
+            nome="Corso annullato",
+            descrizione="Edizione non disponibile.",
+        )
+        EdizioneCorso.objects.create(
+            corso=corso_annullato,
+            data_inizio=oggi + timedelta(days=10),
+            data_fine=oggi + timedelta(days=20),
+            posti_massimi=12,
+            prezzo="100.00",
+            stato="ANNULLATO",
+        )
+
+        pacchetto_attivo = PacchettoAbbonamento.objects.create(
+            nome="Allenamento serale",
+            descrizione="Allenamenti settimanali.",
+        )
+        turno = TurnoAllenamento.objects.create(
+            nome_turno="Turno riservato",
+            giorno=1,
+            orario_inizio="19:00",
+            orario_fine="20:00",
+            luogo="Piscina riservata",
+        )
+        pacchetto_attivo.turni.add(turno)
+        StagioneAbbonamento.objects.create(
+            pacchetto=pacchetto_attivo,
+            stagione="Stagione corrente",
+            prezzo="200.00",
+            data_inizio=oggi,
+            data_fine=oggi + timedelta(days=60),
+            attivo=True,
+        )
+
+        pacchetto_inattivo = PacchettoAbbonamento.objects.create(
+            nome="Allenamento non attivo",
+        )
+        StagioneAbbonamento.objects.create(
+            pacchetto=pacchetto_inattivo,
+            stagione="Stagione futura",
+            prezzo="180.00",
+            data_inizio=oggi + timedelta(days=30),
+            data_fine=oggi + timedelta(days=90),
+            attivo=False,
+        )
+
+        response = self.client.get(reverse("homepage"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Corso apnea base")
+        self.assertContains(response, "Allenamento serale")
+        self.assertContains(response, "Introduzione all&#x27;apnea in sicurezza.")
+        self.assertContains(response, "Lunedì")
+        self.assertContains(
+            response,
+            reverse(
+                "richiesta_informazioni",
+                args=("corso", EdizioneCorso.objects.get(corso=corso_aperto).pk),
+            ),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "richiesta_informazioni",
+                args=(
+                    "allenamento",
+                    StagioneAbbonamento.objects.get(pacchetto=pacchetto_attivo).pk,
+                ),
+            ),
+        )
+        self.assertNotContains(response, "Corso annullato")
+        self.assertNotContains(response, "Allenamento non attivo")
+        self.assertNotContains(response, "Piscina riservata")
+
+    def test_homepage_explains_when_there_are_no_public_activities(self):
+        response = self.client.get(reverse("homepage"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "non ci sono corsi aperti")
+        self.assertContains(response, "non ci sono abbonamenti attivi")
+
+
+class RichiestaInformazioniTests(TestCase):
+    def setUp(self):
+        self.oggi = timezone.localdate()
+        self.corso = Corso.objects.create(
+            nome="Corso richiesta informazioni",
+            descrizione="Dettagli del corso.",
+        )
+        self.edizione = EdizioneCorso.objects.create(
+            corso=self.corso,
+            data_inizio=self.oggi + timedelta(days=7),
+            data_fine=self.oggi + timedelta(days=30),
+            posti_massimi=10,
+            prezzo="100.00",
+            stato="APERTO_ISCRIZIONI",
+        )
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="web@example.com",
+    )
+    def test_course_request_is_saved_and_notifies_staff(self):
+        staff = User.objects.create_user(
+            username="staff_richieste",
+            email="staff@example.com",
+            is_staff=True,
+        )
+        url = reverse(
+            "richiesta_informazioni",
+            args=("corso", self.edizione.pk),
+        )
+
+        response = self.client.post(
+            url,
+            {
+                "nome": "Ada Apnea",
+                "email": "ada@example.com",
+                "messaggio": "Vorrei sapere come partecipare.",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Lo staff ti risponderà")
+        richiesta = RichiestaInformazioni.objects.get()
+        self.assertEqual(richiesta.tipo_attivita, "corso")
+        self.assertEqual(richiesta.edizione_corso, self.edizione)
+        self.assertEqual(richiesta.nome_attivita, self.corso.nome)
+        self.assertEqual(richiesta.nome, "Ada Apnea")
+        self.assertEqual(richiesta.email, "ada@example.com")
+        self.assertIsNotNone(richiesta.creata_il)
+        self.assertIsNotNone(richiesta.email_notificata_il)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [staff.email])
+        self.assertEqual(mail.outbox[0].reply_to, ["ada@example.com"])
+        self.assertIn("Vorrei sapere come partecipare.", mail.outbox[0].body)
+
+    def test_training_request_is_associated_with_its_active_offer(self):
+        pacchetto = PacchettoAbbonamento.objects.create(
+            nome="Allenamento richiesta informazioni",
+        )
+        abbonamento = StagioneAbbonamento.objects.create(
+            pacchetto=pacchetto,
+            stagione="Stagione attuale",
+            prezzo="150.00",
+            data_inizio=self.oggi,
+            data_fine=self.oggi + timedelta(days=60),
+            attivo=True,
+        )
+        url = reverse(
+            "richiesta_informazioni",
+            args=("allenamento", abbonamento.pk),
+        )
+
+        response = self.client.post(
+            url,
+            {
+                "nome": "Marco Apnea",
+                "email": "marco@example.com",
+                "messaggio": "Vorrei informazioni sugli orari.",
+            },
+        )
+
+        self.assertRedirects(
+            response,
+            reverse("richiesta_informazioni_confermata"),
+        )
+        richiesta = RichiestaInformazioni.objects.get()
+        self.assertEqual(richiesta.tipo_attivita, "allenamento")
+        self.assertEqual(richiesta.abbonamento, abbonamento)
+        self.assertEqual(richiesta.nome_attivita, pacchetto.nome)
+        self.assertIsNone(richiesta.edizione_corso)
+        self.assertIsNone(richiesta.email_notificata_il)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="web@example.com",
+    )
+    @patch(
+        "anagrafica.views.EmailMessage.send",
+        side_effect=smtplib.SMTPException("SMTP non disponibile"),
+    )
+    def test_request_is_saved_and_staff_is_warned_when_email_fails(
+        self, send_email
+    ):
+        User.objects.create_user(
+            username="staff_smtp",
+            email="staff@example.com",
+            is_staff=True,
+        )
+        response = self.client.post(
+            reverse(
+                "richiesta_informazioni",
+                args=("corso", self.edizione.pk),
+            ),
+            {
+                "nome": "Luca Apnea",
+                "email": "luca@example.com",
+                "messaggio": "Una domanda.",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "non è stato possibile avvisare lo staff")
+        richiesta = RichiestaInformazioni.objects.get()
+        self.assertIsNone(richiesta.email_notificata_il)
+        send_email.assert_called_once()
+
+    def test_invalid_or_unavailable_activity_cannot_receive_requests(self):
+        response = self.client.post(
+            reverse(
+                "richiesta_informazioni",
+                args=("corso", self.edizione.pk),
+            ),
+            {
+                "nome": "Ada",
+                "email": "non-una-email",
+                "messaggio": "Richiesta.",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(RichiestaInformazioni.objects.exists())
+
+        self.edizione.stato = "ANNULLATO"
+        self.edizione.save(update_fields=("stato",))
+        response_non_disponibile = self.client.get(
+            reverse(
+                "richiesta_informazioni",
+                args=("corso", self.edizione.pk),
+            )
+        )
+        self.assertEqual(response_non_disponibile.status_code, 404)
 
 
 @override_settings(DOCUMENTI_CONSENSO=DOCUMENTI_CONSENSO_TEST)

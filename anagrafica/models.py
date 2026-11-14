@@ -54,6 +54,65 @@ class Socio(models.Model):
         verbose_name_plural = "Soci"
 
 
+class ModificaScadenzaCertificato(models.Model):
+    socio = models.ForeignKey(
+        Socio,
+        on_delete=models.CASCADE,
+        related_name="modifiche_scadenza_certificato",
+    )
+    scadenza_precedente = models.DateField(null=True, blank=True)
+    nuova_scadenza = models.DateField()
+    modificato_il = models.DateTimeField(auto_now_add=True)
+    modificato_da = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="modifiche_scadenza_certificati",
+    )
+
+    class Meta:
+        ordering = ("-modificato_il",)
+        verbose_name = "Modifica scadenza certificato"
+        verbose_name_plural = "Modifiche scadenza certificati"
+
+
+class RichiestaInformazioni(models.Model):
+    TIPI_ATTIVITA = (
+        ("corso", "Corso"),
+        ("allenamento", "Allenamento"),
+    )
+
+    tipo_attivita = models.CharField(max_length=20, choices=TIPI_ATTIVITA)
+    nome_attivita = models.CharField(max_length=150)
+    edizione_corso = models.ForeignKey(
+        "EdizioneCorso",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="richieste_informazioni",
+    )
+    abbonamento = models.ForeignKey(
+        "StagioneAbbonamento",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="richieste_informazioni",
+    )
+    nome = models.CharField(max_length=100)
+    email = models.EmailField()
+    messaggio = models.TextField(max_length=2000)
+    creata_il = models.DateTimeField(auto_now_add=True)
+    email_notificata_il = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-creata_il",)
+        verbose_name = "Richiesta informazioni"
+        verbose_name_plural = "Richieste informazioni"
+
+    def __str__(self):
+        return f"{self.nome} — {self.nome_attivita}"
+
+
 class ConsensoSocio(models.Model):
     TIPI = [
         ("REGOLAMENTO", "Regolamento ASD"),

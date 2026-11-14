@@ -18,13 +18,22 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from django.contrib.auth import views as auth_views # Importiamo le view di auth
+from anagrafica.api import (
+    api_candidati_promemoria,
+    api_registra_promemoria_inviati,
+)
 from anagrafica.views import (
     consensi_socio,
     dashboard,
     homepage,
+    modifica_scadenza_certificato,
+    pagina_staff_certificati,
+    richiesta_informazioni,
+    richiesta_informazioni_confermata,
     registrazione_socio,
     sottoscrivi_abbonamento,
 )
+from anagrafica.forms import SocioLoginForm
 
 
 urlpatterns = [
@@ -32,9 +41,46 @@ urlpatterns = [
     path('', homepage, name='homepage'), 
     path('registrazione/', registrazione_socio, name='registrazione'),
     path('consensi/', consensi_socio, name='consensi'),
+    path(
+        'richiedi-informazioni/<str:tipo>/<int:attivita_id>/',
+        richiesta_informazioni,
+        name='richiesta_informazioni',
+    ),
+    path(
+        'richiesta-informazioni/confermata/',
+        richiesta_informazioni_confermata,
+        name='richiesta_informazioni_confermata',
+    ),
 
     path('dashboard/', dashboard, name='dashboard'),
-    path('login/', auth_views.LoginView.as_view(template_name='login.html'), name='login'),
+    path(
+        'staff/certificati/',
+        pagina_staff_certificati,
+        name='pagina_staff_certificati',
+    ),
+    path(
+        'staff/certificati/<int:socio_id>/modifica/',
+        modifica_scadenza_certificato,
+        name='modifica_scadenza_certificato',
+    ),
+    path(
+        'api/v1/promemoria/candidati/',
+        api_candidati_promemoria,
+        name='api_candidati_promemoria',
+    ),
+    path(
+        'api/v1/promemoria/inviati/',
+        api_registra_promemoria_inviati,
+        name='api_registra_promemoria_inviati',
+    ),
+    path(
+        'login/',
+        auth_views.LoginView.as_view(
+            template_name='login.html',
+            authentication_form=SocioLoginForm,
+        ),
+        name='login',
+    ),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
 
         # NUOVO URL PER LA SOTTOSCRIZIONE

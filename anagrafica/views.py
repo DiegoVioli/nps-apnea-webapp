@@ -1,12 +1,24 @@
 # in anagrafica/views.py
 
+from datetime import timedelta
+import logging
+import smtplib
+
 from django.shortcuts import render, redirect
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
+from django.core.exceptions import PermissionDenied
+from django.contrib import messages
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.core.mail import EmailMessage
 from django.db import transaction
 from django.db.models import Q
+from django.http import Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from .consensi import (
     TIPI_CONSENSO,
@@ -14,17 +26,231 @@ from .consensi import (
     documenti_consenso_configurati,
     versioni_consenso_attuali,
 )
-from .forms import ConsensoSocioForm, SocioRegistrationForm
+from .api import dati_pagina_staff_certificati
+from .forms import (
+    AggiornaScadenzaCertificatoForm,
+    ConsensoSocioForm,
+    RichiestaInformazioniForm,
+    SocioRegistrationForm,
+)
 from .models import (
     ConsensoSocio,
     EdizioneCorso,
     IscrizioneAbbonamento,
+    ModificaScadenzaCertificato,
+    RichiestaInformazioni,
     Socio,
     StagioneAbbonamento,
 )
 
+logger = logging.getLogger(__name__)
+
+
 def homepage(request):
-    return render(request, 'homepage.html')
+    oggi = timezone.localdate()
+    corsi_disponibili = (
+        EdizioneCorso.objects.filter(
+            stato="APERTO_ISCRIZIONI",
+            data_fine__gte=oggi,
+        )
+        .select_related("corso")
+        .order_by("data_inizio", "corso__nome")
+    )
+    abbonamenti_disponibili = (
+        StagioneAbbonamento.objects.filter(attivo=True, data_fine__gte=oggi)
+        .select_related("pacchetto")
+        .prefetch_related("pacchetto__turni")
+        .order_by("data_inizio", "pacchetto__nome")
+    )
+    return render(
+        request,
+        "homepage.html",
+        {
+            "corsi_disponibili": corsi_disponibili,
+            "abbonamenti_disponibili": abbonamenti_disponibili,
+        },
+    )
+
+
+def attivita_pubblica(tipo, attivita_id):
+    oggi = timezone.localdate()
+    if tipo == "corso":
+        attivita = get_object_or_404(
+            EdizioneCorso.objects.select_related("corso"),
+            pk=attivita_id,
+            stato="APERTO_ISCRIZIONI",
+            data_fine__gte=oggi,
+        )
+        return attivita, attivita.corso.nome
+    if tipo == "allenamento":
+        attivita = get_object_or_404(
+            StagioneAbbonamento.objects.select_related("pacchetto"),
+            pk=attivita_id,
+            attivo=True,
+            data_fine__gte=oggi,
+        )
+        return attivita, attivita.pacchetto.nome
+    raise Http404
+
+
+def richiesta_informazioni(request, tipo, attivita_id):
+    attivita, nome_attivita = attivita_pubblica(tipo, attivita_id)
+    form = RichiestaInformazioniForm(
+        request.POST if request.method == "POST" else None
+    )
+    if request.method == "POST" and form.is_valid():
+        richiesta = RichiestaInformazioni.objects.create(
+            tipo_attivita=tipo,
+            nome_attivita=nome_attivita,
+            edizione_corso=attivita if tipo == "corso" else None,
+            abbonamento=attivita if tipo == "allenamento" else None,
+            **form.cleaned_data,
+        )
+        destinatari = list(
+            User.objects.filter(is_active=True, is_staff=True)
+            .exclude(email="")
+            .order_by("pk")
+            .values_list("email", flat=True)
+        )
+        if not destinatari:
+            logger.warning(
+                "Richiesta informazioni %s salvata, ma nessun utente staff "
+                "attivo ha un indirizzo email configurato.",
+                richiesta.pk,
+            )
+            messages.warning(
+                request,
+                "La richiesta è stata salvata, ma non è stato possibile "
+                "avvisare lo staff via email.",
+            )
+        else:
+            corpo = (
+                f"Nuova richiesta di informazioni su: {nome_attivita}\n"
+                f"Tipo attività: {dict(RichiestaInformazioni.TIPI_ATTIVITA)[tipo]}\n"
+                f"Nome: {richiesta.nome}\n"
+                f"Email: {richiesta.email}\n\n"
+                f"Messaggio:\n{richiesta.messaggio}"
+            )
+            try:
+                inviato = EmailMessage(
+                    "Nuova richiesta di informazioni — NPS Apnea",
+                    corpo,
+                    settings.DEFAULT_FROM_EMAIL,
+                    destinatari,
+                    reply_to=[richiesta.email],
+                ).send(fail_silently=False)
+                if inviato != 1:
+                    raise RuntimeError(
+                        "Il backend email non ha confermato l'invio."
+                    )
+            except (OSError, RuntimeError, smtplib.SMTPException):
+                logger.exception(
+                    "Notifica email non inviata per la richiesta %s.",
+                    richiesta.pk,
+                )
+                messages.warning(
+                    request,
+                    "La richiesta è stata salvata, ma non è stato possibile "
+                    "avvisare lo staff via email.",
+                )
+            else:
+                richiesta.email_notificata_il = timezone.now()
+                richiesta.save(update_fields=("email_notificata_il",))
+                messages.success(
+                    request,
+                    "Richiesta inviata. Lo staff ti risponderà all’indirizzo "
+                    "email indicato.",
+                )
+        return redirect("richiesta_informazioni_confermata")
+
+    return render(
+        request,
+        "richiesta_informazioni.html",
+        {
+            "attivita": attivita,
+            "nome_attivita": nome_attivita,
+            "tipo_attivita": dict(RichiestaInformazioni.TIPI_ATTIVITA)[tipo],
+            "form": form,
+        },
+    )
+
+
+def richiesta_informazioni_confermata(request):
+    return render(request, "richiesta_informazioni_confermata.html")
+
+
+@login_required(login_url="login")
+def pagina_staff_certificati(request):
+    if not request.user.is_staff:
+        raise PermissionDenied
+    righe = dati_pagina_staff_certificati()
+    for riga in righe:
+        riga["form_scadenza"] = AggiornaScadenzaCertificatoForm(
+            initial={"nuova_scadenza": riga["socio"].scadenza_certificato_medico},
+            auto_id=f"id_scadenza_{riga['socio'].pk}_%s",
+        )
+    return render(
+        request,
+        "staff/certificati_scadenza.html",
+        {"righe": righe},
+    )
+
+
+@login_required(login_url="login")
+@require_POST
+@transaction.atomic
+def modifica_scadenza_certificato(request, socio_id):
+    if not request.user.is_staff:
+        raise PermissionDenied
+
+    socio = get_object_or_404(
+        Socio.objects.select_for_update(),
+        pk=socio_id,
+        stato="ATTIVO",
+        user__isnull=False,
+        scadenza_certificato_medico__isnull=False,
+        scadenza_certificato_medico__lte=timezone.localdate() + timedelta(days=30),
+    )
+    form = AggiornaScadenzaCertificatoForm(request.POST)
+    if not form.is_valid():
+        righe = dati_pagina_staff_certificati()
+        for riga in righe:
+            if riga["socio"].pk == socio.pk:
+                riga["form_scadenza"] = form
+            else:
+                riga["form_scadenza"] = AggiornaScadenzaCertificatoForm(
+                    initial={
+                        "nuova_scadenza": riga["socio"].scadenza_certificato_medico
+                    },
+                    auto_id=f"id_scadenza_{riga['socio'].pk}_%s",
+                )
+        form.auto_id = f"id_scadenza_{socio.pk}_%s"
+        return render(
+            request,
+            "staff/certificati_scadenza.html",
+            {"righe": righe},
+            status=400,
+        )
+
+    nuova_scadenza = form.cleaned_data["nuova_scadenza"]
+    if nuova_scadenza != socio.scadenza_certificato_medico:
+        ModificaScadenzaCertificato.objects.create(
+            socio=socio,
+            scadenza_precedente=socio.scadenza_certificato_medico,
+            nuova_scadenza=nuova_scadenza,
+            modificato_da=request.user,
+        )
+        socio.scadenza_certificato_medico = nuova_scadenza
+        socio.save(update_fields=("scadenza_certificato_medico",))
+        messages.success(
+            request,
+            f"Scadenza del certificato di {socio} aggiornata.",
+        )
+    else:
+        messages.info(request, "La data di scadenza non è cambiata.")
+
+    return redirect("pagina_staff_certificati")
+
 
 @transaction.atomic
 def registrazione_socio(request):
