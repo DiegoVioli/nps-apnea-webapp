@@ -135,3 +135,69 @@ L'IP è un dato personale: l'informativa privacy deve indicarne la raccolta,
 finalità, conservazione e periodo di retention. In ambienti dietro un proxy
 `REMOTE_ADDR` può identificare il proxy anziché il dispositivo del socio.
 Applicare la migrazione con `python manage.py migrate`.
+
+## Elenco certificati e API promemoria
+
+Gli utenti autenticati con permesso staff possono consultare
+`/staff/certificati/`, che mostra i soci attivi con certificato scaduto o in
+scadenza entro 30 giorni.
+
+Un batch esterno può ottenere i promemoria attualmente inviabili con:
+
+```text
+GET /api/v1/promemoria/candidati/
+Authorization: Bearer <CERTIFICATI_API_TOKEN>
+```
+
+La risposta include ID socio, nome, cognome, email, telefono, data di scadenza,
+giorni alla scadenza e stato del certificato. Sono inclusi solo soci attivi con
+un indirizzo utente associato; vengono esclusi i certificati mancanti, quelli
+con scadenza oltre 30 giorni e i promemoria già inviati negli ultimi 7 giorni
+per la stessa scadenza.
+
+Dopo aver inviato le email, il batch deve comunicare i soli invii riusciti:
+
+```text
+POST /api/v1/promemoria/inviati/
+Authorization: Bearer <CERTIFICATI_API_TOKEN>
+Content-Type: application/json
+
+{
+  "inviati": [
+    {"socio_id": 123, "data_scadenza": "2026-12-01"}
+  ]
+}
+```
+
+Il server registra l'ora di ricezione del report in
+`PromemoriaCertificato.ultima_email_inviata`. Il batch deve inviare il report
+solo dopo la conferma SMTP positiva e usare l'ID e la data di scadenza ricevuti
+dall'endpoint dei candidati. Le date non più corrispondenti a quelle attuali o
+i soci non più attivi vengono rifiutati senza registrare parzialmente la lista.
+Il reinvio dello stesso report entro 7 giorni non modifica la data già
+registrata.
+
+Configurare `CERTIFICATI_API_TOKEN` come variabile d'ambiente con un valore
+casuale robusto, uguale sul server e sul PC del batch. Non inserirlo nel
+repository né nei log; usare l'API solo tramite HTTPS. La pagina staff richiede
+il normale login alla webapp; gli endpoint API richiedono il token e non
+utilizzano la sessione del browser.
+
+Nella stessa pagina staff è possibile aggiornare la scadenza del certificato
+dei soci elencati. Ogni variazione effettiva viene salvata insieme alla data
+precedente, alla nuova data, al timestamp e all'utente staff che l'ha eseguita.
+La cronologia è consultabile nell'area admin Django alla voce "Modifiche
+scadenza certificati" ed è in sola lettura.
+
+## Richieste di informazioni sulle attività
+
+Ogni corso aperto e abbonamento attivo in home include un collegamento al
+modulo pubblico per chiedere informazioni. Il modulo salva nome, email,
+messaggio, attività selezionata e timestamp nella sezione "Richieste
+informazioni" dell'admin. Dopo il salvataggio, il sistema invia una notifica
+agli utenti staff attivi con email configurata; in caso di errore SMTP, la
+richiesta resta salvata e la mancata notifica viene registrata nei log. La data
+di notifica email viene registrata solo dopo l'invio riuscito.
+
+L'informativa privacy deve descrivere la raccolta dei recapiti, l'uso per
+rispondere alla richiesta, i destinatari interni e il periodo di conservazione.

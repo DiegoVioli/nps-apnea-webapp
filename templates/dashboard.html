@@ -336,6 +336,10 @@
         {% endif %}
         <form class="logout-form" action="{% url 'logout' %}" method="post">
             {% csrf_token %}
+            {% if user.is_staff %}
+                <a class="logout-button" href="{% url 'pagina_staff_certificati' %}" style="text-decoration: none;">Certificati soci</a>
+                <a class="logout-button" href="{% url 'admin:index' %}" style="text-decoration: none;">Amministrazione</a>
+            {% endif %}
             <button class="logout-button" type="submit">Esci</button>
         </form>
     </header>

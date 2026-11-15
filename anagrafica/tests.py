@@ -79,7 +79,7 @@ class HomepageOfferteTest(TestCase):
         self.assertContains(response, '2028/2029')
         self.assertNotContains(response, '2026/2027')
         self.assertNotContains(response, '2029/2030')
-        self.assertEqual(response.content.decode().count('Prezzo: €120.00'), 1)
+        self.assertEqual(response.content.decode().count('Prezzo: €120,00'), 1)
 
 
 class HomepageAttivitaTests(TestCase):
@@ -140,8 +140,8 @@ class HomepageAttivitaTests(TestCase):
         self.assertContains(response, "Allenamento esposto")
         self.assertNotContains(response, "Allenamento non esposto")
         self.assertNotContains(response, "Allenamento inattivo")
-        self.assertNotContains(response, "€200.00")
-        self.assertContains(response, "€150.00")
+        self.assertNotContains(response, "€200,00")
+        self.assertContains(response, "€150,00")
         self.assertContains(
             response,
             reverse("richiesta_informazioni", args=("corso", edizione.pk)),
