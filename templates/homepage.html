@@ -2,73 +2,176 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>NPS Apnea</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NPS Apnea | Associazione sportiva</title>
+    {% include "includes/public_styles.html" %}
     <style>
-        body { font-family: sans-serif; text-align: center; padding-top: 50px; }
-        h1 { color: #005f73; }
-        .actions a { 
-            background-color: #0077b6; 
-            color: white; 
-            padding: 15px 25px; 
-            text-decoration: none; 
-            border-radius: 5px;
-            margin: 0 10px; /* Aggiunge spazio tra i pulsanti */
+        .public-activities { margin-top: 30px; }
+        .public-activity-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
         }
-        .actions .logout { background-color: #ae2012; } /* Colore diverso per il logout */
+        .public-activity-group {
+            min-width: 0;
+            padding: 22px;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+        }
+        .public-activity-list { display: grid; gap: 12px; }
+        .public-activity-card {
+            padding: 16px;
+            background: #fbfdfe;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+        }
+        .public-activity-card h3 { margin-bottom: 8px; }
+        .public-activity-card p { margin-bottom: 6px; color: var(--muted); }
+        .public-activity-card p:last-child { margin-bottom: 0; }
+        .public-activity-card .public-price { color: var(--ink); font-weight: 700; }
+        .public-schedule { margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
+        .public-empty {
+            margin: 0;
+            padding: 14px;
+            color: var(--muted);
+            background: #f7fafb;
+            border: 1px dashed #cbd9e1;
+            border-radius: 10px;
+        }
+        .topbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+        @media (max-width: 720px) {
+            .public-activity-grid { grid-template-columns: 1fr; }
+            .topbar { flex-wrap: wrap; }
+        }
     </style>
 </head>
 <body>
-    
-    <h1>Benvenuto nel sito della NPS Apnea</h1>
-
-    <br>
-
-    {% if offerte_in_evidenza %}
-        <section>
-            <h2>Offerte abbonamento</h2>
-            {% for offerta in offerte_in_evidenza %}
-                <article>
-                    <h3>{{ offerta.pacchetto.nome }} - {{ offerta.stagione }}</h3>
-                    <p>Valido dal {{ offerta.data_inizio|date:"d-m-Y" }} al {{ offerta.data_fine|date:"d-m-Y" }}</p>
-                    {% if offerta.mostra_prezzo_in_homepage %}
-                        <p>Prezzo: €{{ offerta.prezzo }}</p>
-                    {% endif %}
-                </article>
-            {% endfor %}
-        </section>
-    {% endif %}
-
-    <div class="actions">
-        
+    <header class="topbar">
+        <a class="brand" href="{% url 'homepage' %}" aria-label="NPS Apnea, home">
+            <span class="brand-mark" aria-hidden="true">NPS</span>
+            <span>
+                NPS Apnea
+                <span class="brand-caption">Associazione sportiva</span>
+            </span>
+        </a>
         {% if user.is_authenticated %}
-            
-            <!-- COSA VEDE UN UTENTE LOGGATO -->
-            <p>
-                Ciao, 
-                {% if user.first_name %}
-                    {{ user.first_name }}!
-                {% else %}
-                    {{ user.username }}!
-                {% endif %}
-            </p>
-            <a href="{% url 'dashboard' %}">Vai alla tua Dashboard</a>
-            <form action="{% url 'logout' %}" method="post" style="display: inline;">
-                {% csrf_token %}
-                <button type="submit" class="logout-link" style="background: none; border: none; padding: 0; color: #ae2012; text-decoration: underline; cursor: pointer; font-size: 1em; font-family: sans-serif;">
-                    Logout
-                </button>
-            </form>
-
+            <div class="topbar-actions">
+            {% if user.is_staff %}
+                <a class="topbar-link" href="{% url 'pagina_staff_certificati' %}">Certificati soci</a>
+                <a class="topbar-link" href="{% url 'admin:index' %}">Amministrazione</a>
+            {% endif %}
+            <a class="topbar-link" href="{% url 'dashboard' %}">La tua area socio</a>
+            </div>
         {% else %}
-
-            <!-- COSA VEDE UN UTENTE ANONIMO -->
-            <p>Pronto a esplorare il mondo del silenzio con noi?</p>
-            <a href="{% url 'registrazione' %}">Diventa Socio Ora!</a>
-            <a href="{% url 'login' %}">Login</a>
-            
+            <a class="topbar-link" href="{% url 'login' %}">Area soci</a>
         {% endif %}
+    </header>
 
-    </div>
+    <main class="page">
+        <section class="welcome" aria-labelledby="welcome-title">
+            <div class="welcome-content home-content">
+                <p class="eyebrow">NPS Apnea</p>
+                {% if user.is_authenticated %}
+                    <h1 id="welcome-title">
+                        Ciao, {% if user.first_name %}{{ user.first_name }}{% else %}{{ user.username }}{% endif %}!
+                    </h1>
+                    <p class="welcome-copy">
+                        Bentornato nella tua area personale. Consulta la tua iscrizione e le attività del club.
+                    </p>
+                    <div class="home-actions">
+                        <a class="button-link" href="{% url 'dashboard' %}">Vai alla tua area socio</a>
+                        <form class="logout-form" action="{% url 'logout' %}" method="post">
+                            {% csrf_token %}
+                            <button class="logout-button" type="submit">Esci</button>
+                        </form>
+                    </div>
+                {% else %}
+                    <h1 id="welcome-title">Il mondo del silenzio ti aspetta.</h1>
+                    <p class="welcome-copy">
+                        Scopri NPS Apnea, unisciti alla nostra comunità e vivi il mare con passione e sicurezza.
+                    </p>
+                    <div class="home-actions">
+                        <a class="button-link" href="{% url 'registrazione' %}">Diventa socio</a>
+                        <a class="button-secondary" href="{% url 'login' %}">Accedi all’area soci</a>
+                    </div>
+                {% endif %}
+            </div>
+        </section>
 
+        <section class="public-activities" aria-labelledby="activities-title">
+            <h2 id="activities-title">Scopri le attività</h2>
+            <div class="public-activity-grid">
+                <section class="public-activity-group" aria-labelledby="courses-title">
+                    <h3 id="courses-title">Corsi</h3>
+                    <div class="public-activity-list">
+                        {% for edizione in corsi_disponibili %}
+                            <article class="public-activity-card">
+                                <h3>{{ edizione.corso.nome }}</h3>
+                                {% if edizione.corso.descrizione %}
+                                    <p>{{ edizione.corso.descrizione }}</p>
+                                {% endif %}
+                                <p>
+                                    Dal {{ edizione.data_inizio|date:"d/m/Y" }}
+                                    al {{ edizione.data_fine|date:"d/m/Y" }}
+                                </p>
+                                <p class="public-price">Prezzo: €{{ edizione.prezzo|floatformat:2 }}</p>
+                                <a class="button-link" href="{% url 'richiesta_informazioni' 'corso' edizione.pk %}">
+                                    Chiedi maggiori informazioni
+                                </a>
+                            </article>
+                        {% empty %}
+                            <p class="public-empty">Al momento non ci sono corsi aperti alle iscrizioni.</p>
+                        {% endfor %}
+                    </div>
+                </section>
+
+                <section class="public-activity-group" aria-labelledby="training-title">
+                    <h3 id="training-title">Allenamenti</h3>
+                    <div class="public-activity-list">
+                        {% for offerta in offerte_in_evidenza %}
+                            <article class="public-activity-card">
+                                <h3>{{ offerta.pacchetto.nome }}</h3>
+                                <p>{{ offerta.stagione }}</p>
+                                {% if offerta.pacchetto.descrizione %}
+                                    <p>{{ offerta.pacchetto.descrizione }}</p>
+                                {% endif %}
+                                <p>
+                                    Dal {{ offerta.data_inizio|date:"d/m/Y" }}
+                                    al {{ offerta.data_fine|date:"d/m/Y" }}
+                                </p>
+                                {% if offerta.mostra_prezzo_in_homepage %}
+                                    <p class="public-price">Prezzo: €{{ offerta.prezzo|floatformat:2 }}</p>
+                                {% endif %}
+                                {% with turni=offerta.pacchetto.turni.all %}
+                                    {% if turni %}
+                                        <ul class="public-schedule">
+                                            {% for turno in turni %}
+                                                <li>{{ turno.get_giorno_display }}, {{ turno.orario_inizio|time:"H:i" }}–{{ turno.orario_fine|time:"H:i" }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% endif %}
+                                {% endwith %}
+                                <a class="button-link" href="{% url 'richiesta_informazioni' 'allenamento' offerta.pk %}">
+                                    Chiedi maggiori informazioni
+                                </a>
+                            </article>
+                        {% empty %}
+                            <p class="public-empty">Al momento non ci sono allenamenti pubblicati.</p>
+                        {% endfor %}
+                    </div>
+                </section>
+            </div>
+            </section>
+
+        <section class="home-card">
+            <p>
+                La tua area personale raccoglie in un unico posto le informazioni sulla tua iscrizione,
+                il certificato medico e le attività disponibili.
+            </p>
+        </section>
+        <p class="footer-note">Un’associazione, tante avventure sott’acqua.</p>
+    </main>
 </body>
 </html>

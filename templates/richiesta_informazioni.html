@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Richiedi informazioni | NPS Apnea</title>
+    {% include "includes/public_styles.html" %}
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{% url 'homepage' %}" aria-label="NPS Apnea, home">
+            <span class="brand-mark" aria-hidden="true">NPS</span>
+            <span>NPS Apnea <span class="brand-caption">Richiesta informazioni</span></span>
+        </a>
+        <a class="topbar-link" href="{% url 'homepage' %}">Torna alla home</a>
+    </header>
+
+    <main class="page">
+        <div class="auth-layout">
+            <section class="auth-intro">
+                <p class="eyebrow" style="color: var(--teal);">{{ tipo_attivita }}</p>
+                <h1>{{ nome_attivita }}</h1>
+                {% if tipo_attivita == "Corso" %}
+                    <p>
+                        Dal {{ attivita.data_inizio|date:"d/m/Y" }}
+                        al {{ attivita.data_fine|date:"d/m/Y" }} ·
+                        € {{ attivita.prezzo|floatformat:2 }}
+                    </p>
+                    <p>{{ attivita.corso.descrizione }}</p>
+                {% else %}
+                    <p>{{ attivita.stagione }}</p>
+                    <p>
+                        Dal {{ attivita.data_inizio|date:"d/m/Y" }}
+                        al {{ attivita.data_fine|date:"d/m/Y" }} ·
+                        {% if attivita.mostra_prezzo_in_homepage %}
+                            € {{ attivita.prezzo|floatformat:2 }}
+                        {% endif %}
+                    </p>
+                    {% if attivita.pacchetto.descrizione %}
+                        <p>{{ attivita.pacchetto.descrizione }}</p>
+                    {% endif %}
+                {% endif %}
+            </section>
+
+            <section class="auth-card" aria-labelledby="request-title">
+                <h2 id="request-title">Chiedi maggiori informazioni</h2>
+                <p class="auth-caption">
+                    Lascia i tuoi recapiti e un messaggio: lo staff ti risponderà via email.
+                </p>
+                <form class="auth-form" method="post">
+                    {% csrf_token %}
+                    {{ form.as_p }}
+                    <p class="auth-caption">
+                        Useremo i dati inseriti solo per rispondere alla tua richiesta.
+                    </p>
+                    <button class="primary-button" type="submit">Invia richiesta</button>
+                </form>
+            </section>
+        </div>
+    </main>
+</body>
+</html>
