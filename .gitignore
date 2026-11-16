@@ -1,0 +1,18 @@
+# Ambiente virtuale Python
+venv/
+env/
+ENV/
+
+# Database locale di sviluppo
+db.sqlite3
+
+# Cache di Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# File di configurazione dell'editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
