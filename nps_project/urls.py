@@ -26,11 +26,14 @@ from anagrafica.views import (
     consensi_socio,
     dashboard,
     homepage,
+    modifica_dichiarazione_gara,
+    modifica_risultati_gara,
     modifica_scadenza_certificato,
     pagina_staff_certificati,
     richiesta_informazioni,
     richiesta_informazioni_confermata,
     registrazione_socio,
+    richiedi_iscrizione_gara,
     sottoscrivi_abbonamento,
 )
 from anagrafica.forms import SocioLoginForm
@@ -53,6 +56,21 @@ urlpatterns = [
     ),
 
     path('dashboard/', dashboard, name='dashboard'),
+    path(
+        "gare/<int:gara_id>/iscrizione/",
+        richiedi_iscrizione_gara,
+        name="richiedi_iscrizione_gara",
+    ),
+    path(
+        "gare/iscrizioni/<int:iscrizione_id>/dichiarazione/",
+        modifica_dichiarazione_gara,
+        name="modifica_dichiarazione_gara",
+    ),
+    path(
+        "gare/iscrizioni/<int:iscrizione_id>/risultati/",
+        modifica_risultati_gara,
+        name="modifica_risultati_gara",
+    ),
     path(
         'staff/certificati/',
         pagina_staff_certificati,

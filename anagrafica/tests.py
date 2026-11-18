@@ -16,16 +16,21 @@ from django.utils import timezone
 from .consensi import TIPI_CONSENSO, consensi_mancanti, versioni_consenso_attuali
 from .admin import RichiestaInformazioniAdmin
 from .forms import SocioLoginForm
+from .gare import conferma_iscrizione_gara, invia_email_conferma_gara
 from .models import (
     ConsensoSocio,
     Corso,
+    DichiarazioneGara,
     EdizioneCorso,
+    Gara,
+    IscrizioneGara,
     IscrizioneAbbonamento,
     ModificaScadenzaCertificato,
     PacchettoAbbonamento,
     PromemoriaCertificato,
     RichiestaInformazioni,
     RiepilogoCertificatiAmministratori,
+    RisultatoGara,
     Socio,
     StagioneAbbonamento,
     TurnoAllenamento,
@@ -1243,6 +1248,672 @@ class ConsensoSocioTests(TestCase):
         self.assertEqual(
             set(consensi.values_list("versione_modulo", flat=True)),
             {"DA_CONFIGURARE"},
+        )
+
+
+@override_settings(
+    DOCUMENTI_CONSENSO=DOCUMENTI_CONSENSO_TEST,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    DEFAULT_FROM_EMAIL="gare@example.com",
+)
+class GareTests(TestCase):
+    def setUp(self):
+        self.oggi = timezone.localdate()
+        self.user = User.objects.create_user(
+            username="atleta_gare",
+            email="atleta@example.com",
+            first_name="Ada",
+            last_name="Apnea",
+        )
+        self.socio = Socio.objects.create(
+            user=self.user,
+            codice_fiscale="ATLETAGARE000001",
+            data_nascita=date(1990, 1, 1),
+            stato="ATTIVO",
+            scadenza_certificato_medico=self.oggi + timedelta(days=365),
+        )
+        ConsensoSocio.objects.bulk_create(
+            [
+                ConsensoSocio(
+                    socio=self.socio,
+                    tipo=tipo,
+                    versione_modulo=DOCUMENTI_CONSENSO_TEST[chiave]["versione"],
+                    accettato_il=timezone.now(),
+                    indirizzo_ip="127.0.0.1",
+                )
+                for tipo, chiave, _ in TIPI_CONSENSO
+            ]
+        )
+        self.gara = self.crea_gara()
+
+    def crea_gara(self, **kwargs):
+        defaults = {
+            "nome": "Trofeo NPS",
+            "luogo": "Piscina comunale",
+            "data_gara": self.oggi + timedelta(days=30),
+            "termine_iscrizioni": self.oggi + timedelta(days=20),
+            "prezzo": "25.00",
+            "discipline": ["DYN", "STA", "CNF", "FIM", "DNF", "CWT"],
+        }
+        defaults.update(kwargs)
+        return Gara.objects.create(**defaults)
+
+    def test_dashboard_lists_published_races_and_shows_enrollment_state(self):
+        self.crea_gara(
+            nome="Gara bozza",
+            pubblicata=False,
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Trofeo NPS")
+        self.assertNotContains(response, "Gara bozza")
+        self.assertContains(response, "€ 25,00")
+        self.assertContains(
+            response,
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+        )
+
+        IscrizioneGara.objects.create(socio=self.socio, gara=self.gara)
+        response = self.client.get(reverse("dashboard"))
+
+        self.assertContains(response, "In attesa di conferma")
+        self.assertNotContains(
+            response,
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+        )
+
+    def test_staff_can_create_a_race_from_django_admin(self):
+        staff = User.objects.create_superuser(
+            username="staff_gare",
+            email="staff@example.com",
+            password="StrongPass!4831",
+        )
+        self.client.force_login(staff)
+
+        response = self.client.post(
+            reverse("admin:anagrafica_gara_add"),
+            {
+                "nome": "Gara creata dallo staff",
+                "luogo": "Piscina",
+                "data_gara": (self.oggi + timedelta(days=40)).isoformat(),
+                "termine_iscrizioni": (self.oggi + timedelta(days=30)).isoformat(),
+                "prezzo": "35.00",
+                "discipline": ["DYN", "STA", "FIM"],
+                "pubblicata": "on",
+                "_save": "Salva",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        gara = Gara.objects.get(nome="Gara creata dallo staff")
+        self.assertEqual(set(gara.discipline), {"DYN", "STA", "FIM"})
+
+    def test_staff_can_add_an_athlete_to_a_race_from_django_admin(self):
+        staff = User.objects.create_superuser(
+            username="staff_iscrizioni",
+            email="staff-iscrizioni@example.com",
+            password="StrongPass!4831",
+        )
+        self.client.force_login(staff)
+
+        response = self.client.post(
+            reverse("admin:anagrafica_iscrizionegara_add"),
+            {
+                "gara": str(self.gara.pk),
+                "socio": str(self.socio.pk),
+                "dichiarazioni-TOTAL_FORMS": "1",
+                "dichiarazioni-INITIAL_FORMS": "0",
+                "dichiarazioni-MIN_NUM_FORMS": "1",
+                "dichiarazioni-MAX_NUM_FORMS": "1",
+                "dichiarazioni-0-disciplina": "DYN",
+                "dichiarazioni-0-distanza_m": "100",
+                "dichiarazioni-0-profondita_m": "",
+                "dichiarazioni-0-tempo": "00:03:00",
+                "risultati-TOTAL_FORMS": "0",
+                "risultati-INITIAL_FORMS": "0",
+                "risultati-MIN_NUM_FORMS": "0",
+                "risultati-MAX_NUM_FORMS": "1000",
+                "_save": "Salva",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        iscrizione = IscrizioneGara.objects.get(socio=self.socio, gara=self.gara)
+        self.assertEqual(iscrizione.stato, "IN_ATTESA")
+        self.assertEqual(iscrizione.dichiarazioni.count(), 1)
+        dichiarazione = iscrizione.dichiarazioni.get()
+        self.assertEqual(dichiarazione.disciplina, "DYN")
+        self.assertEqual(str(dichiarazione.distanza_m), "100.00")
+        self.assertEqual(dichiarazione.tempo, timedelta(minutes=3))
+
+    def test_staff_can_open_existing_enrollment_with_readonly_declaration(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+        )
+        DichiarazioneGara.objects.create(
+            iscrizione=iscrizione,
+            disciplina="DYN",
+            distanza_m="100",
+            tempo=timedelta(minutes=3),
+        )
+        staff = User.objects.create_superuser(
+            username="staff_visualizza_iscrizione",
+            email="staff-visualizza@example.com",
+            password="StrongPass!4831",
+        )
+        self.client.force_login(staff)
+
+        response = self.client.get(
+            reverse("admin:anagrafica_iscrizionegara_change", args=(iscrizione.pk,))
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "DYN")
+
+    def test_staff_cannot_add_a_declaration_for_a_discipline_not_offered(self):
+        gara_solo_dyn = self.crea_gara(
+            nome="Gara solo DYN",
+            discipline=["DYN"],
+        )
+        staff = User.objects.create_superuser(
+            username="staff_disciplina",
+            email="staff-disciplina@example.com",
+            password="StrongPass!4831",
+        )
+        self.client.force_login(staff)
+
+        response = self.client.post(
+            reverse("admin:anagrafica_iscrizionegara_add"),
+            {
+                "gara": str(gara_solo_dyn.pk),
+                "socio": str(self.socio.pk),
+                "dichiarazioni-TOTAL_FORMS": "1",
+                "dichiarazioni-INITIAL_FORMS": "0",
+                "dichiarazioni-MIN_NUM_FORMS": "1",
+                "dichiarazioni-MAX_NUM_FORMS": "1",
+                "dichiarazioni-0-disciplina": "STA",
+                "dichiarazioni-0-tempo": "00:03:00",
+                "risultati-TOTAL_FORMS": "0",
+                "risultati-INITIAL_FORMS": "0",
+                "risultati-MIN_NUM_FORMS": "0",
+                "risultati-MAX_NUM_FORMS": "1000",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(IscrizioneGara.objects.filter(gara=gara_solo_dyn).exists())
+
+    def test_staff_must_provide_required_declaration_values(self):
+        staff = User.objects.create_superuser(
+            username="staff_dichiarazione",
+            email="staff-dichiarazione@example.com",
+            password="StrongPass!4831",
+        )
+        self.client.force_login(staff)
+
+        response = self.client.post(
+            reverse("admin:anagrafica_iscrizionegara_add"),
+            {
+                "gara": str(self.gara.pk),
+                "socio": str(self.socio.pk),
+                "dichiarazioni-TOTAL_FORMS": "1",
+                "dichiarazioni-INITIAL_FORMS": "0",
+                "dichiarazioni-MIN_NUM_FORMS": "1",
+                "dichiarazioni-MAX_NUM_FORMS": "1",
+                "dichiarazioni-0-disciplina": "DYN",
+                "dichiarazioni-0-distanza_m": "",
+                "dichiarazioni-0-profondita_m": "",
+                "dichiarazioni-0-tempo": "",
+                "risultati-TOTAL_FORMS": "0",
+                "risultati-INITIAL_FORMS": "0",
+                "risultati-MIN_NUM_FORMS": "0",
+                "risultati-MAX_NUM_FORMS": "1000",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(IscrizioneGara.objects.filter(gara=self.gara).exists())
+
+    def test_member_submits_one_required_declaration_for_one_selected_discipline(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+            {
+                "disciplina": "CNF",
+                "distanza_DYN": "100",
+                "tempo_DYN": "00:03:00",
+                "tempo_STA": "00:04:30",
+                "profondita_CNF": "40",
+                "tempo_CNF": "00:02:00",
+            },
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione = IscrizioneGara.objects.get(socio=self.socio, gara=self.gara)
+        self.assertEqual(iscrizione.stato, "IN_ATTESA")
+        self.assertEqual(iscrizione.dichiarazioni.count(), 1)
+        dichiarazione_cnf = iscrizione.dichiarazioni.get(disciplina="CNF")
+        self.assertEqual(str(dichiarazione_cnf.profondita_m), "40.00")
+        self.assertEqual(dichiarazione_cnf.tempo, timedelta(minutes=2))
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_member_can_edit_declaration_while_enrollment_is_pending(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+        )
+        dichiarazione = DichiarazioneGara.objects.create(
+            iscrizione=iscrizione,
+            disciplina="DYN",
+            distanza_m="100",
+            tempo=timedelta(minutes=3),
+        )
+        dichiarazione.refresh_from_db()
+        self.client.force_login(self.user)
+        url = reverse("modifica_dichiarazione_gara", args=(iscrizione.pk,))
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Salva modifiche")
+        self.assertEqual(response.context["form"]["disciplina"].value(), "DYN")
+        self.assertEqual(
+            response.context["form"]["distanza_DYN"].value(),
+            dichiarazione.distanza_m,
+        )
+        self.assertContains(
+            self.client.get(reverse("dashboard")),
+            reverse("modifica_dichiarazione_gara", args=(iscrizione.pk,)),
+        )
+
+        response = self.client.post(
+            url,
+            {
+                "disciplina": "DYN",
+                "distanza_DYN": "125.5",
+                "tempo_DYN": "00:03:30",
+            },
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione.refresh_from_db()
+        dichiarazione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "IN_ATTESA")
+        self.assertEqual(iscrizione.dichiarazioni.count(), 1)
+        self.assertEqual(str(dichiarazione.distanza_m), "125.50")
+        self.assertEqual(dichiarazione.tempo, timedelta(minutes=3, seconds=30))
+
+        response = self.client.post(
+            url,
+            {
+                "disciplina": "CNF",
+                "profondita_CNF": "42",
+                "tempo_CNF": "00:02:45",
+            },
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertEqual(iscrizione.dichiarazioni.count(), 1)
+        dichiarazione_cnf = iscrizione.dichiarazioni.get()
+        self.assertEqual(dichiarazione_cnf.disciplina, "CNF")
+        self.assertEqual(str(dichiarazione_cnf.profondita_m), "42.00")
+        self.assertEqual(dichiarazione_cnf.tempo, timedelta(minutes=2, seconds=45))
+
+    def test_declaration_edit_is_blocked_after_confirmation_or_registration_deadline(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+        )
+        self.client.force_login(self.user)
+        url = reverse("modifica_dichiarazione_gara", args=(iscrizione.pk,))
+
+        self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertContains(
+            self.client.get(reverse("dashboard")),
+            reverse("modifica_dichiarazione_gara", args=(iscrizione.pk,)),
+        )
+
+        iscrizione.stato = "ISCRITTO"
+        iscrizione.save(update_fields=("stato",))
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertNotContains(
+            self.client.get(reverse("dashboard")),
+            reverse("modifica_dichiarazione_gara", args=(iscrizione.pk,)),
+        )
+
+        iscrizione.stato = "IN_ATTESA"
+        iscrizione.save(update_fields=("stato",))
+        self.gara.termine_iscrizioni = self.oggi
+        self.gara.save(update_fields=("termine_iscrizioni",))
+        self.assertEqual(self.client.get(url).status_code, 200)
+
+        self.gara.termine_iscrizioni = self.oggi - timedelta(days=1)
+        self.gara.save(update_fields=("termine_iscrizioni",))
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_invalid_declarations_do_not_create_an_enrollment(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+            {"disciplina": "DYN", "tempo_DYN": "00:04:30"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(IscrizioneGara.objects.exists())
+
+        gara_solo_dyn = self.crea_gara(
+            nome="Gara solo DYN",
+            discipline=["DYN"],
+        )
+        response = self.client.post(
+            reverse("richiedi_iscrizione_gara", args=(gara_solo_dyn.pk,)),
+            {
+                "disciplina": "STA",
+                "tempo_STA": "00:04:30",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(IscrizioneGara.objects.exists())
+
+    def test_inactive_member_cannot_enroll(self):
+        self.client.force_login(self.user)
+        self.socio.stato = "SOSPESO"
+        self.socio.save(update_fields=("stato",))
+
+        response = self.client.post(
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+            {},
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertFalse(IscrizioneGara.objects.exists())
+
+    def test_closed_registration_cannot_enroll(self):
+        self.client.force_login(self.user)
+        gara_chiusa = self.crea_gara(
+            nome="Gara chiusa",
+            termine_iscrizioni=self.oggi - timedelta(days=1),
+        )
+
+        response = self.client.get(
+            reverse("richiedi_iscrizione_gara", args=(gara_chiusa.pk,))
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertFalse(IscrizioneGara.objects.exists())
+
+    def test_certificate_must_cover_race_date_for_registration(self):
+        self.client.force_login(self.user)
+        self.socio.scadenza_certificato_medico = self.gara.data_gara - timedelta(days=1)
+        self.socio.save(update_fields=("scadenza_certificato_medico",))
+
+        dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(dashboard, "Certificato medico mancante o non valido")
+        self.assertNotContains(
+            dashboard,
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+        )
+
+        response = self.client.post(
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
+            {},
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertFalse(IscrizioneGara.objects.exists())
+
+        self.socio.scadenza_certificato_medico = self.gara.data_gara
+        self.socio.save(update_fields=("scadenza_certificato_medico",))
+        response = self.client.get(
+            reverse("richiedi_iscrizione_gara", args=(self.gara.pk,))
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_confirmation_sends_email_only_once(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+        )
+        model_admin = admin.site._registry[IscrizioneGara]
+        request = RequestFactory().post("/admin/")
+
+        with patch.object(model_admin, "message_user"):
+            model_admin.conferma_iscrizioni(
+                request,
+                IscrizioneGara.objects.filter(pk=iscrizione.pk),
+            )
+
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ISCRITTO")
+        self.assertIsNotNone(iscrizione.confermata_il)
+        self.assertIsNotNone(iscrizione.email_conferma_inviata_il)
+        self.assertEqual(mail.outbox[0].to, ["atleta@example.com"])
+        self.assertIn(self.gara.nome, mail.outbox[0].subject)
+        self.client.force_login(self.user)
+        self.assertContains(self.client.get(reverse("dashboard")), "Iscritto")
+
+        with patch.object(model_admin, "message_user"):
+            model_admin.conferma_iscrizioni(
+                request,
+                IscrizioneGara.objects.filter(pk=iscrizione.pk),
+            )
+        self.assertEqual(len(mail.outbox), 1)
+
+    @patch("anagrafica.gare.send_mail", return_value=0)
+    def test_failed_confirmation_email_can_be_retried(self, send_mail_mock):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+        )
+
+        modificata, email_inviata = conferma_iscrizione_gara(iscrizione)
+
+        self.assertTrue(modificata)
+        self.assertFalse(email_inviata)
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ISCRITTO")
+        self.assertIsNone(iscrizione.email_conferma_inviata_il)
+        send_mail_mock.assert_called_once()
+
+        with patch("anagrafica.gare.send_mail", return_value=1):
+            self.assertTrue(invia_email_conferma_gara(iscrizione))
+        iscrizione.refresh_from_db()
+        self.assertIsNotNone(iscrizione.email_conferma_inviata_il)
+
+    def test_admin_cannot_confirm_registration_with_expired_certificate(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+        )
+        self.socio.scadenza_certificato_medico = self.gara.data_gara - timedelta(days=1)
+        self.socio.save(update_fields=("scadenza_certificato_medico",))
+        model_admin = admin.site._registry[IscrizioneGara]
+
+        with patch.object(model_admin, "message_user"):
+            model_admin.conferma_iscrizioni(
+                RequestFactory().post("/admin/"),
+                IscrizioneGara.objects.filter(pk=iscrizione.pk),
+            )
+
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "IN_ATTESA")
+        self.assertFalse(model_admin.certificato_valido_alla_gara(iscrizione))
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_retry_action_does_not_resend_confirmed_email(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+            stato="ISCRITTO",
+            confermata_il=timezone.now(),
+            email_conferma_inviata_il=timezone.now(),
+        )
+        model_admin = admin.site._registry[IscrizioneGara]
+
+        with (
+            patch.object(model_admin, "message_user"),
+            patch("anagrafica.admin.invia_email_conferma_gara") as invia_email,
+        ):
+            model_admin.reinvia_email_conferme(
+                RequestFactory().post("/admin/"),
+                IscrizioneGara.objects.filter(pk=iscrizione.pk),
+            )
+
+        invia_email.assert_not_called()
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_results_are_unavailable_before_race_or_before_confirmation(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+            stato="IN_ATTESA",
+        )
+        self.client.force_login(self.user)
+        url = reverse("modifica_risultati_gara", args=(iscrizione.pk,))
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+        iscrizione.stato = "ISCRITTO"
+        iscrizione.save(update_fields=("stato",))
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_member_can_add_and_edit_results_only_for_past_confirmed_races(self):
+        self.gara.data_gara = self.oggi
+        self.gara.termine_iscrizioni = self.oggi - timedelta(days=5)
+        self.gara.save()
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+            stato="ISCRITTO",
+            confermata_il=timezone.now(),
+        )
+        DichiarazioneGara.objects.create(
+            iscrizione=iscrizione,
+            disciplina="DYN",
+            distanza_m="100",
+            tempo=timedelta(minutes=3),
+        )
+        self.client.force_login(self.user)
+        url = reverse("modifica_risultati_gara", args=(iscrizione.pk,))
+        dati = {
+            "distanza_DYN": "112.5",
+            "tempo_DYN": "00:02:30",
+        }
+
+        response = self.client.post(url, dati)
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertEqual(iscrizione.risultati.count(), 1)
+        risultato_dyn = iscrizione.risultati.get(disciplina="DYN")
+        self.assertEqual(str(risultato_dyn.distanza_m), "112.50")
+        self.assertEqual(risultato_dyn.tempo, timedelta(minutes=2, seconds=30))
+        dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(dashboard, "Storico gare e prestazioni")
+        self.assertContains(dashboard, "DYN - apnea dinamica con pinne")
+
+        dati["distanza_DYN"] = "115"
+        self.client.post(url, dati)
+        risultato_dyn.refresh_from_db()
+        self.assertEqual(str(risultato_dyn.distanza_m), "115.00")
+
+        altro_user = User.objects.create_user(username="altro_atleta")
+        Socio.objects.create(
+            user=altro_user,
+            codice_fiscale="ALTROATLETA00001",
+            data_nascita=date(1991, 1, 1),
+            stato="ATTIVO",
+        )
+        self.client.force_login(altro_user)
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_dashboard_compares_declared_and_achieved_performances_and_shows_charts(self):
+        gare = [
+            (
+                self.crea_gara(
+                    nome="Gara più vecchia",
+                    data_gara=self.oggi - timedelta(days=60),
+                    termine_iscrizioni=self.oggi - timedelta(days=70),
+                ),
+                "100",
+                "110",
+                timedelta(minutes=3),
+                timedelta(minutes=2, seconds=50),
+            ),
+            (
+                self.crea_gara(
+                    nome="Gara recente",
+                    data_gara=self.oggi - timedelta(days=30),
+                    termine_iscrizioni=self.oggi - timedelta(days=40),
+                ),
+                "120",
+                "125",
+                timedelta(minutes=4),
+                timedelta(minutes=3, seconds=45),
+            ),
+        ]
+        for gara, distanza_dichiarata, distanza_realizzata, tempo_dichiarato, tempo_realizzato in gare:
+            iscrizione = IscrizioneGara.objects.create(
+                socio=self.socio,
+                gara=gara,
+                stato="ISCRITTO",
+                confermata_il=timezone.now(),
+            )
+            DichiarazioneGara.objects.create(
+                iscrizione=iscrizione,
+                disciplina="DYN",
+                distanza_m=distanza_dichiarata,
+                tempo=tempo_dichiarato,
+            )
+            RisultatoGara.objects.create(
+                iscrizione=iscrizione,
+                disciplina="DYN",
+                distanza_m=distanza_realizzata,
+                tempo=tempo_realizzato,
+            )
+
+        gara_senza_risultato = self.crea_gara(
+            nome="Gara senza risultato",
+            data_gara=self.oggi - timedelta(days=10),
+            termine_iscrizioni=self.oggi - timedelta(days=20),
+        )
+        iscrizione_senza_risultato = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=gara_senza_risultato,
+            stato="ISCRITTO",
+            confermata_il=timezone.now(),
+        )
+        DichiarazioneGara.objects.create(
+            iscrizione=iscrizione_senza_risultato,
+            disciplina="DYN",
+            distanza_m="130",
+            tempo=timedelta(minutes=4, seconds=30),
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Distanza dichiarata")
+        self.assertContains(response, "Distanza realizzata")
+        self.assertContains(response, "130")
+        self.assertContains(response, "Non inserito")
+        self.assertContains(response, "Andamento delle prestazioni")
+        self.assertContains(response, "Gara più vecchia: dichiarato 100")
+        self.assertContains(response, "Gara più vecchia: realizzato 110")
+        self.assertEqual(len(response.context["grafici_performance"]), 2)
+        grafico_distanza = next(
+            grafico
+            for grafico in response.context["grafici_performance"]
+            if grafico["titolo"] == "DYN - apnea dinamica con pinne — Distanza (m)"
+        )
+        self.assertEqual(
+            [punto["x"] for punto in grafico_distanza["dichiarati"]],
+            [58.0, 622.0],
         )
 
 

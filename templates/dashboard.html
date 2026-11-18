@@ -226,6 +226,49 @@
             gap: 12px;
         }
 
+        .race-comparisons { display: grid; gap: 14px; margin: 16px 0; }
+        .race-comparisons h4 { margin: 0 0 7px; font-size: 14px; }
+        .performance-values {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            margin: 0;
+        }
+        .performance-values div {
+            padding: 9px 11px;
+            background: #f7fafb;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+        }
+        .performance-values dt { color: var(--muted); font-size: 11px; }
+        .performance-values dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; }
+        .performance-section { margin-top: 24px; }
+        .performance-section h3 { margin: 0 0 4px; font-size: 17px; }
+        .performance-section > p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+        .performance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+        .performance-chart {
+            min-width: 0;
+            margin: 0;
+            padding: 13px;
+            background: #fbfdfe;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+        }
+        .performance-chart figcaption { margin-bottom: 8px; font-size: 13px; font-weight: 750; }
+        .chart-scroll { overflow-x: auto; }
+        .performance-chart svg { display: block; width: 100%; min-width: 480px; height: auto; }
+        .chart-gridline { stroke: #e2eaf0; stroke-width: 1; }
+        .chart-axis-label { fill: var(--muted); font-size: 11px; }
+        .chart-line-declared, .chart-line-achieved { fill: none; stroke-width: 2.5; }
+        .chart-line-declared { stroke: #527b98; stroke-dasharray: 6 4; }
+        .chart-line-achieved { stroke: var(--teal); }
+        .chart-point-declared { fill: #527b98; }
+        .chart-point-achieved { fill: var(--teal); }
+        .chart-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 7px 0 0; padding: 0; list-style: none; }
+        .chart-legend li { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+        .legend-swatch { width: 16px; height: 3px; background: #527b98; }
+        .legend-achieved { background: var(--teal); }
+
         .history-kind {
             display: inline-flex;
             margin-bottom: 8px;
@@ -298,6 +341,16 @@
             font-size: 13px;
         }
 
+        .message {
+            margin-bottom: 14px;
+            padding: 12px 16px;
+            background: var(--success-bg);
+            border: 1px solid #c9ead8;
+            border-radius: 10px;
+        }
+        .message-error { color: var(--danger); background: var(--danger-bg); border-color: #f0c9c6; }
+        .message-warning { color: var(--warning); background: var(--warning-bg); border-color: #f0ddb4; }
+
         .footer-note { margin: 25px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 
         @media (max-width: 720px) {
@@ -309,6 +362,7 @@
             .activity-grid { grid-template-columns: 1fr; gap: 14px; }
             .history-panel { grid-column: auto; }
             .history-list { grid-template-columns: 1fr; }
+            .performance-grid { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 420px) {
@@ -345,6 +399,10 @@
     </header>
 
     <main class="page">
+        {% for message in messages %}
+            <p class="message message-{{ message.tags }}">{{ message }}</p>
+        {% endfor %}
+
         <section class="welcome" aria-labelledby="welcome-title">
             <div class="welcome-content">
                 <p class="eyebrow">La tua area personale</p>
@@ -491,6 +549,161 @@
                         <p class="empty-state">Al momento non ci sono nuovi corsi a cui iscriverti.</p>
                     {% endfor %}
                 </div>
+            </section>
+
+            <section class="panel history-panel" aria-labelledby="races-title">
+                <div class="panel-heading">
+                    <span class="panel-icon" aria-hidden="true">⌁</span>
+                    <div>
+                        <h2 id="races-title">Gare</h2>
+                        <p>Gare future, richieste d'iscrizione e conferme</p>
+                    </div>
+                </div>
+
+                <div class="item-list">
+                    {% for elemento in gare_prossime %}
+                        {% with gara=elemento.gara iscrizione=elemento.iscrizione %}
+                            <article class="activity-item">
+                                <h3>{{ gara.nome }}</h3>
+                                <p>
+                                    Data: {{ gara.data_gara|date:"d/m/Y" }}
+                                    {% if gara.luogo %}· Luogo: {{ gara.luogo }}{% endif %}
+                                </p>
+                                <p>Iscrizioni entro: {{ gara.termine_iscrizioni|date:"d/m/Y" }}</p>
+                                <p class="item-price">Quota: € {{ gara.prezzo }}</p>
+                                <p>Discipline disponibili: {{ gara.discipline_display }}</p>
+
+                                {% if iscrizione %}
+                                    {% if not elemento.certificato_valido %}
+                                        <span class="detail-badge badge-danger">
+                                            Certificato medico non valido fino alla data della gara.
+                                        </span>
+                                    {% endif %}
+                                    <span class="detail-badge {% if iscrizione.stato == 'ISCRITTO' %}badge-good{% else %}badge-warning{% endif %}">
+                                        {{ iscrizione.get_stato_display }}
+                                    </span>
+                                    {% for dichiarazione in iscrizione.dichiarazioni.all %}
+                                        <p>
+                                            {{ dichiarazione.get_disciplina_display }}:
+                                            distanza {{ dichiarazione.distanza_m|default_if_none:"—" }} m ·
+                                            profondità {{ dichiarazione.profondita_m|default_if_none:"—" }} m ·
+                                            tempo {{ dichiarazione.tempo|default_if_none:"—" }}
+                                        </p>
+                                    {% endfor %}
+                                    {% if iscrizione.stato == "IN_ATTESA" and gara.termine_iscrizioni|date:"Y-m-d" >= oggi %}
+                                        <a class="button-link" href="{% url 'modifica_dichiarazione_gara' iscrizione.pk %}">
+                                            Modifica dichiarazione
+                                        </a>
+                                    {% endif %}
+                                {% elif gara.termine_iscrizioni|date:"Y-m-d" >= oggi %}
+                                    {% if elemento.certificato_valido %}
+                                        <a class="button-link" href="{% url 'richiedi_iscrizione_gara' gara.pk %}">
+                                            Richiedi iscrizione
+                                        </a>
+                                    {% else %}
+                                        <span class="detail-badge badge-danger">
+                                            Certificato medico mancante o non valido fino alla gara
+                                        </span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="detail-badge badge-warning">Iscrizioni chiuse</span>
+                                {% endif %}
+                            </article>
+                        {% endwith %}
+                    {% empty %}
+                        <p class="empty-state">Al momento non ci sono gare pubblicate.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="panel history-panel" aria-labelledby="race-history-title">
+                <div class="panel-heading">
+                    <span class="panel-icon" aria-hidden="true">↺</span>
+                    <div>
+                        <h2 id="race-history-title">Storico gare e prestazioni</h2>
+                        <p>Gare a cui hai partecipato e risultati personali facoltativi</p>
+                    </div>
+                </div>
+
+                <div class="history-list">
+                    {% for gara_storico in storico_gare %}
+                        {% with iscrizione=gara_storico.iscrizione %}
+                        <article class="activity-item">
+                            <span class="history-kind">Gara</span>
+                            <h3>{{ iscrizione.gara.nome }}</h3>
+                            <p>
+                                {{ iscrizione.gara.data_gara|date:"d/m/Y" }}
+                                {% if iscrizione.gara.luogo %}· {{ iscrizione.gara.luogo }}{% endif %}
+                            </p>
+                            {% for confronto in gara_storico.confronti %}
+                                <div class="race-comparisons">
+                                    <h4>Disciplina: {{ confronto.disciplina }}</h4>
+                                    {% for metrica in confronto.metriche %}
+                                        <dl class="performance-values">
+                                            <div>
+                                                <dt>{{ metrica.etichetta }} dichiarata</dt>
+                                                <dd>{{ metrica.dichiarato }}{% if metrica.unita == "m" %} m{% endif %}</dd>
+                                            </div>
+                                            <div>
+                                                <dt>{{ metrica.etichetta }} realizzata</dt>
+                                                <dd>{{ metrica.realizzato }}{% if metrica.unita == "m" %} m{% endif %}</dd>
+                                            </div>
+                                        </dl>
+                                    {% endfor %}
+                                </div>
+                            {% endfor %}
+                            <a class="button-link" href="{% url 'modifica_risultati_gara' iscrizione.pk %}">
+                                Inserisci o modifica risultati
+                            </a>
+                        </article>
+                        {% endwith %}
+                    {% empty %}
+                        <p class="empty-state" style="grid-column: 1 / -1;">
+                            Non hai ancora partecipato a gare concluse.
+                        </p>
+                    {% endfor %}
+                </div>
+
+                {% if grafici_performance %}
+                    <div class="performance-section" aria-labelledby="performance-chart-title">
+                        <h3 id="performance-chart-title">Andamento delle prestazioni</h3>
+                        <p>Confronto tra valori dichiarati e realizzati nelle gare concluse.</p>
+                        <div class="performance-grid">
+                            {% for grafico in grafici_performance %}
+                                <figure class="performance-chart">
+                                    <figcaption>{{ grafico.titolo }}</figcaption>
+                                    <div class="chart-scroll">
+                                        <svg viewBox="0 0 640 260" role="img" aria-label="Grafico: {{ grafico.titolo }}">
+                                            {% for tick in grafico.tick %}
+                                                <line class="chart-gridline" x1="58" x2="622" y1="{{ tick.y }}" y2="{{ tick.y }}" />
+                                                <text class="chart-axis-label" x="51" y="{{ tick.y|add:4 }}" text-anchor="end">{{ tick.label }}</text>
+                                            {% endfor %}
+                                            <polyline class="chart-line-declared" points="{{ grafico.linea_dichiarati }}" />
+                                            <polyline class="chart-line-achieved" points="{{ grafico.linea_realizzati }}" />
+                                            {% for punto in grafico.dichiarati %}
+                                                <circle class="chart-point-declared" cx="{{ punto.x }}" cy="{{ punto.y }}" r="4">
+                                                    <title>{{ punto.titolo }}</title>
+                                                </circle>
+                                            {% endfor %}
+                                            {% for punto in grafico.realizzati %}
+                                                <circle class="chart-point-achieved" cx="{{ punto.x }}" cy="{{ punto.y }}" r="4">
+                                                    <title>{{ punto.titolo }}</title>
+                                                </circle>
+                                            {% endfor %}
+                                            {% for data in grafico.date %}
+                                                <text class="chart-axis-label" x="{{ data.x }}" y="238" text-anchor="middle">{{ data.label }}</text>
+                                            {% endfor %}
+                                        </svg>
+                                    </div>
+                                    <ul class="chart-legend" aria-label="Legenda">
+                                        <li><span class="legend-swatch" aria-hidden="true"></span>Dichiarato</li>
+                                        <li><span class="legend-swatch legend-achieved" aria-hidden="true"></span>Realizzato</li>
+                                    </ul>
+                                </figure>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% endif %}
             </section>
 
             <section class="panel history-panel" aria-labelledby="history-title">

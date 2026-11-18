@@ -282,3 +282,267 @@ class EdizioneCorso(models.Model):
     class Meta:
         verbose_name = "Edizione di un Corso"
         verbose_name_plural = "Edizioni dei Corsi"
+
+
+class Gara(models.Model):
+    DISCIPLINE_CHOICES = (
+        ("DYN", "DYN - apnea dinamica con pinne"),
+        ("DNF", "DNF - apnea dinamica senza pinne"),
+        ("STA", "STA - apnea statica"),
+        ("CWT", "CWT - assetto costante con pinne"),
+        ("CNF", "CNF - assetto costante senza pinne"),
+        ("FIM", "FIM - free immersion"),
+    )
+    DISCIPLINE_DINAMICHE = {"DYN", "DNF"}
+    DISCIPLINE_PROFONDITA = {"CWT", "CNF", "FIM"}
+
+    nome = models.CharField(max_length=150, verbose_name="Nome gara")
+    luogo = models.CharField(max_length=200, blank=True, verbose_name="Luogo")
+    data_gara = models.DateField(verbose_name="Data della gara")
+    termine_iscrizioni = models.DateField(verbose_name="Iscrizioni entro")
+    prezzo = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        verbose_name="Quota di iscrizione (€)",
+    )
+    discipline = models.JSONField(default=list, verbose_name="Discipline")
+    pubblicata = models.BooleanField(
+        default=True,
+        verbose_name="Pubblicata",
+        help_text="Se disattivata, la gara non è visibile ai soci.",
+    )
+
+    class Meta:
+        ordering = ("data_gara", "nome")
+        verbose_name = "Gara"
+        verbose_name_plural = "Gare"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        codici_validi = {codice for codice, _ in self.DISCIPLINE_CHOICES}
+        if (
+            not isinstance(self.discipline, list)
+            or not self.discipline
+            or any(not isinstance(codice, str) for codice in self.discipline)
+        ):
+            raise ValidationError(
+                {"discipline": "Seleziona almeno una disciplina."}
+            )
+        if (
+            len(self.discipline) != len(set(self.discipline))
+            or not set(self.discipline).issubset(codici_validi)
+        ):
+            raise ValidationError(
+                {"discipline": "Una o più discipline selezionate non sono valide."}
+            )
+        if self.termine_iscrizioni and self.data_gara:
+            if self.termine_iscrizioni > self.data_gara:
+                raise ValidationError(
+                    {
+                        "termine_iscrizioni": (
+                            "La scadenza delle iscrizioni non può essere "
+                            "successiva alla data della gara."
+                        )
+                    }
+                )
+        if self.prezzo is not None and self.prezzo < 0:
+            raise ValidationError({"prezzo": "Il prezzo non può essere negativo."})
+
+    @property
+    def discipline_display(self):
+        labels = dict(self.DISCIPLINE_CHOICES)
+        return ", ".join(
+            labels[codice]
+            for codice in self.discipline
+            if isinstance(codice, str) and codice in labels
+        )
+
+    def __str__(self):
+        return self.nome
+
+
+class IscrizioneGara(models.Model):
+    STATI = (
+        ("IN_ATTESA", "In attesa di conferma"),
+        ("ISCRITTO", "Iscritto"),
+    )
+
+    socio = models.ForeignKey(
+        Socio,
+        on_delete=models.CASCADE,
+        related_name="iscrizioni_gara",
+    )
+    gara = models.ForeignKey(
+        Gara,
+        on_delete=models.CASCADE,
+        related_name="iscrizioni",
+    )
+    stato = models.CharField(
+        max_length=20,
+        choices=STATI,
+        default="IN_ATTESA",
+    )
+    richiesta_il = models.DateTimeField(auto_now_add=True)
+    confermata_il = models.DateTimeField(null=True, blank=True)
+    email_conferma_inviata_il = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("gara__data_gara", "socio__user__last_name")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("socio", "gara"),
+                name="unique_socio_gara",
+            )
+        ]
+        verbose_name = "Iscrizione gara"
+        verbose_name_plural = "Iscrizioni gare"
+
+    @property
+    def certificato_valido_alla_data_gara(self):
+        scadenza = self.socio.scadenza_certificato_medico
+        return scadenza is not None and scadenza >= self.gara.data_gara
+
+    def __str__(self):
+        return f"{self.socio} - {self.gara}"
+
+
+class DichiarazioneGara(models.Model):
+    iscrizione = models.ForeignKey(
+        IscrizioneGara,
+        on_delete=models.CASCADE,
+        related_name="dichiarazioni",
+    )
+    disciplina = models.CharField(max_length=3, choices=Gara.DISCIPLINE_CHOICES)
+    distanza_m = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Distanza dichiarata (m)",
+    )
+    profondita_m = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Profondità dichiarata (m)",
+    )
+    tempo = models.DurationField(null=True, blank=True, verbose_name="Tempo dichiarato")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("iscrizione", "disciplina"),
+                name="unique_dichiarazione_iscrizione_disciplina",
+            )
+        ]
+        verbose_name = "Dichiarazione gara"
+        verbose_name_plural = "Dichiarazioni gara"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        if not self.disciplina:
+            return
+        iscrizione = self._state.fields_cache.get("iscrizione")
+        if iscrizione is None:
+            if not self.iscrizione_id:
+                return
+            iscrizione = self.iscrizione
+        if self.disciplina not in iscrizione.gara.discipline:
+            raise ValidationError(
+                {"disciplina": "La disciplina non è prevista per questa gara."}
+            )
+        errori = {}
+        if self.disciplina in Gara.DISCIPLINE_DINAMICHE:
+            if self.distanza_m is None:
+                errori["distanza_m"] = "Inserisci la distanza dichiarata."
+            if self.tempo is None:
+                errori["tempo"] = "Inserisci il tempo dichiarato."
+            if self.profondita_m is not None:
+                errori["profondita_m"] = "La profondità non si applica a questa disciplina."
+        elif self.disciplina == "STA":
+            if self.tempo is None:
+                errori["tempo"] = "Inserisci il tempo dichiarato."
+            if self.distanza_m is not None or self.profondita_m is not None:
+                errori["distanza_m"] = "Distanza e profondità non si applicano alla STA."
+        else:
+            if self.profondita_m is None:
+                errori["profondita_m"] = "Inserisci la profondità dichiarata."
+            if self.tempo is None:
+                errori["tempo"] = "Inserisci il tempo dichiarato."
+            if self.distanza_m is not None:
+                errori["distanza_m"] = "La distanza non si applica a questa disciplina."
+        if self.distanza_m is not None and self.distanza_m < 0:
+            errori["distanza_m"] = "La distanza non può essere negativa."
+        if self.profondita_m is not None and self.profondita_m < 0:
+            errori["profondita_m"] = "La profondità non può essere negativa."
+        if self.tempo is not None and self.tempo.total_seconds() < 0:
+            errori["tempo"] = "Il tempo non può essere negativo."
+        if errori:
+            raise ValidationError(errori)
+
+
+class RisultatoGara(models.Model):
+    iscrizione = models.ForeignKey(
+        IscrizioneGara,
+        on_delete=models.CASCADE,
+        related_name="risultati",
+    )
+    disciplina = models.CharField(max_length=3, choices=Gara.DISCIPLINE_CHOICES)
+    distanza_m = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Distanza realizzata (m)",
+    )
+    profondita_m = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Profondità realizzata (m)",
+    )
+    tempo = models.DurationField(null=True, blank=True, verbose_name="Tempo realizzato")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("iscrizione", "disciplina"),
+                name="unique_risultato_iscrizione_disciplina",
+            )
+        ]
+        verbose_name = "Risultato gara"
+        verbose_name_plural = "Risultati gare"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        if not self.iscrizione_id or not self.disciplina:
+            return
+        if self.disciplina not in self.iscrizione.gara.discipline:
+            raise ValidationError(
+                {"disciplina": "La disciplina non è prevista per questa gara."}
+            )
+        errori = {}
+        if self.disciplina in Gara.DISCIPLINE_DINAMICHE:
+            if self.profondita_m is not None:
+                errori["profondita_m"] = "La profondità non si applica a questa disciplina."
+        elif self.disciplina == "STA":
+            if self.distanza_m is not None or self.profondita_m is not None:
+                errori["distanza_m"] = "Distanza e profondità non si applicano alla STA."
+        elif self.distanza_m is not None:
+            errori["distanza_m"] = "La distanza non si applica a questa disciplina."
+        if self.distanza_m is not None and self.distanza_m < 0:
+            errori["distanza_m"] = "La distanza non può essere negativa."
+        if self.profondita_m is not None and self.profondita_m < 0:
+            errori["profondita_m"] = "La profondità non può essere negativa."
+        if self.tempo is not None and self.tempo.total_seconds() < 0:
+            errori["tempo"] = "Il tempo non può essere negativo."
+        if errori:
+            raise ValidationError(errori)

@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied
 from django.core.mail import EmailMessage
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -29,18 +29,25 @@ from .api import dati_pagina_staff_certificati
 from .forms import (
     AggiornaScadenzaCertificatoForm,
     ConsensoSocioForm,
+    IscrizioneGaraForm,
     RichiestaInformazioniForm,
+    RisultatoGaraForm,
     SocioRegistrationForm,
 )
 from .models import (
     ConsensoSocio,
+    DichiarazioneGara,
     EdizioneCorso,
+    Gara,
+    IscrizioneGara,
     IscrizioneAbbonamento,
     ModificaScadenzaCertificato,
     RichiestaInformazioni,
+    RisultatoGara,
     Socio,
     StagioneAbbonamento,
 )
+from .performance import prepara_storico_gare
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +296,47 @@ def dashboard(request):
         .select_related('abbonamento__pacchetto')
         .order_by('-abbonamento__data_fine')
     )
+    gare_prossime = Gara.objects.none()
+    if socio.stato == "ATTIVO":
+        gare_prossime = Gara.objects.filter(
+            pubblicata=True,
+            data_gara__gt=oggi,
+        ).prefetch_related(
+            Prefetch(
+                "iscrizioni",
+                queryset=IscrizioneGara.objects.filter(socio=socio).prefetch_related(
+                    "dichiarazioni"
+                ),
+                to_attr="iscrizioni_del_socio",
+            )
+        )
+    gare_dashboard = [
+        {
+            "gara": gara,
+            "iscrizione": (
+                gara.iscrizioni_del_socio[0]
+                if gara.iscrizioni_del_socio
+                else None
+            ),
+            "certificato_valido": (
+                socio.scadenza_certificato_medico is not None
+                and socio.scadenza_certificato_medico >= gara.data_gara
+            ),
+        }
+        for gara in gare_prossime
+    ]
+    iscrizioni_gare_passate = list(
+        socio.iscrizioni_gara.filter(
+            stato="ISCRITTO",
+            gara__data_gara__lte=oggi,
+        )
+        .select_related("gara")
+        .prefetch_related("dichiarazioni", "risultati")
+        .order_by("-gara__data_gara")
+    )
+    storico_gare, grafici_performance = prepara_storico_gare(
+        iscrizioni_gare_passate
+    )
 
     context = {
         'socio': socio,
@@ -304,8 +352,205 @@ def dashboard(request):
         'edizioni_aperte': edizioni_aperte,
         'iscrizioni_storiche_abbonamenti': iscrizioni_storiche_abbonamenti,
         'iscrizioni_storiche_corsi': iscrizioni_storiche_corsi,
+        "gare_prossime": gare_dashboard,
+        "storico_gare": storico_gare,
+        "grafici_performance": grafici_performance,
     }
     return render(request, 'dashboard.html', context)
+
+
+@login_required
+@transaction.atomic
+def richiedi_iscrizione_gara(request, gara_id):
+    try:
+        socio = request.user.socio
+    except Socio.DoesNotExist:
+        return redirect("homepage")
+
+    if socio.stato != "ATTIVO":
+        messages.error(request, "Solo i soci attivi possono iscriversi alle gare.")
+        return redirect("dashboard")
+    if consensi_mancanti(socio):
+        return redirect("consensi")
+
+    gara = get_object_or_404(Gara, pk=gara_id, pubblicata=True)
+    oggi = timezone.localdate()
+    if gara.data_gara <= oggi or gara.termine_iscrizioni < oggi:
+        messages.error(request, "Le iscrizioni a questa gara sono chiuse.")
+        return redirect("dashboard")
+    if (
+        socio.scadenza_certificato_medico is None
+        or socio.scadenza_certificato_medico < gara.data_gara
+    ):
+        messages.error(
+            request,
+            "Per iscriverti, il certificato medico deve essere valido fino "
+            "alla data della gara.",
+        )
+        return redirect("dashboard")
+
+    iscrizione_esistente = IscrizioneGara.objects.filter(
+        socio=socio,
+        gara=gara,
+    ).first()
+    if iscrizione_esistente:
+        return redirect("dashboard")
+
+    form = IscrizioneGaraForm(
+        request.POST if request.method == "POST" else None,
+        gara=gara,
+    )
+    if request.method == "POST" and form.is_valid():
+        iscrizione, creata = IscrizioneGara.objects.get_or_create(
+            socio=socio,
+            gara=gara,
+        )
+        if not creata:
+            return redirect("dashboard")
+        disciplina = form.cleaned_data["disciplina"]
+        dichiarazione = DichiarazioneGara(
+            iscrizione=iscrizione,
+            disciplina=disciplina,
+            distanza_m=form.cleaned_data.get(f"distanza_{disciplina}"),
+            profondita_m=form.cleaned_data.get(f"profondita_{disciplina}"),
+            tempo=form.cleaned_data.get(f"tempo_{disciplina}"),
+        )
+        dichiarazione.full_clean()
+        dichiarazione.save()
+        messages.success(
+            request,
+            "Richiesta d'iscrizione inviata. È in attesa di conferma dello staff.",
+        )
+        return redirect("dashboard")
+
+    return render(
+        request,
+        "gare/iscrizione.html",
+        {"gara": gara, "form": form},
+    )
+
+
+@login_required
+@transaction.atomic
+def modifica_dichiarazione_gara(request, iscrizione_id):
+    try:
+        socio = request.user.socio
+    except Socio.DoesNotExist:
+        return redirect("homepage")
+
+    oggi = timezone.localdate()
+    iscrizione = get_object_or_404(
+        IscrizioneGara.objects.select_for_update()
+        .select_related("gara")
+        .prefetch_related("dichiarazioni"),
+        pk=iscrizione_id,
+        socio=socio,
+        stato="IN_ATTESA",
+        gara__pubblicata=True,
+        gara__data_gara__gt=oggi,
+        gara__termine_iscrizioni__gte=oggi,
+    )
+    dichiarazioni = list(iscrizione.dichiarazioni.all())
+    dichiarazione = dichiarazioni[0] if dichiarazioni else None
+    iniziali = {}
+    if dichiarazione:
+        disciplina = dichiarazione.disciplina
+        iniziali["disciplina"] = disciplina
+        if disciplina in Gara.DISCIPLINE_DINAMICHE:
+            iniziali[f"distanza_{disciplina}"] = dichiarazione.distanza_m
+        elif disciplina in Gara.DISCIPLINE_PROFONDITA:
+            iniziali[f"profondita_{disciplina}"] = dichiarazione.profondita_m
+        iniziali[f"tempo_{disciplina}"] = dichiarazione.tempo
+
+    form = IscrizioneGaraForm(
+        request.POST if request.method == "POST" else None,
+        gara=iscrizione.gara,
+        initial=iniziali,
+    )
+    if request.method == "POST" and form.is_valid():
+        disciplina = form.cleaned_data["disciplina"]
+        iscrizione.dichiarazioni.exclude(disciplina=disciplina).delete()
+        dichiarazione, _ = DichiarazioneGara.objects.get_or_create(
+            iscrizione=iscrizione,
+            disciplina=disciplina,
+        )
+        dichiarazione.distanza_m = form.cleaned_data.get(f"distanza_{disciplina}")
+        dichiarazione.profondita_m = form.cleaned_data.get(
+            f"profondita_{disciplina}"
+        )
+        dichiarazione.tempo = form.cleaned_data.get(f"tempo_{disciplina}")
+        dichiarazione.full_clean()
+        dichiarazione.save()
+        messages.success(request, "La dichiarazione per la gara è stata aggiornata.")
+        return redirect("dashboard")
+
+    return render(
+        request,
+        "gare/iscrizione.html",
+        {
+            "gara": iscrizione.gara,
+            "form": form,
+            "modifica": True,
+        },
+    )
+
+
+@login_required
+@transaction.atomic
+def modifica_risultati_gara(request, iscrizione_id):
+    try:
+        socio = request.user.socio
+    except Socio.DoesNotExist:
+        return redirect("homepage")
+
+    oggi = timezone.localdate()
+    iscrizione = get_object_or_404(
+        IscrizioneGara.objects.select_related("gara", "socio").prefetch_related(
+            "dichiarazioni",
+            "risultati",
+        ),
+        pk=iscrizione_id,
+        socio=socio,
+        stato="ISCRITTO",
+        gara__data_gara__lte=oggi,
+    )
+    form = RisultatoGaraForm(
+        request.POST if request.method == "POST" else None,
+        iscrizione=iscrizione,
+    )
+    if request.method == "POST" and form.is_valid():
+        for dichiarazione in iscrizione.dichiarazioni.all():
+            disciplina = dichiarazione.disciplina
+            distanza = form.cleaned_data.get(f"distanza_{disciplina}")
+            profondita = form.cleaned_data.get(f"profondita_{disciplina}")
+            tempo = form.cleaned_data.get(f"tempo_{disciplina}")
+            risultato = RisultatoGara.objects.filter(
+                iscrizione=iscrizione,
+                disciplina=disciplina,
+            ).first()
+            if distanza is None and profondita is None and tempo is None:
+                if risultato:
+                    risultato.delete()
+                continue
+            if risultato is None:
+                risultato = RisultatoGara(
+                    iscrizione=iscrizione,
+                    disciplina=disciplina,
+                )
+            risultato.distanza_m = distanza
+            risultato.profondita_m = profondita
+            risultato.tempo = tempo
+            risultato.full_clean()
+            risultato.save()
+
+        messages.success(request, "I risultati della gara sono stati salvati.")
+        return redirect("dashboard")
+
+    return render(
+        request,
+        "gare/risultati.html",
+        {"iscrizione": iscrizione, "form": form},
+    )
 
 
 def _righe_certificati_staff(socio_id_form=None, form=None):

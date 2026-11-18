@@ -1,9 +1,18 @@
 from django.contrib import admin
+from django.contrib import messages
+from django import forms
+from django.core.exceptions import ValidationError
+from django.forms.models import BaseInlineFormSet
 from django.http import HttpResponse
 from django.template.loader import render_to_string
 from datetime import date, timedelta 
+from .gare import conferma_iscrizione_gara, invia_email_conferma_gara
 from .models import (
     ConsensoSocio,
+    DichiarazioneGara,
+    Gara,
+    IscrizioneGara,
+    RisultatoGara,
     Socio,
     TurnoAllenamento,
     PacchettoAbbonamento,
@@ -13,6 +22,213 @@ from .models import (
     ModificaScadenzaCertificato,
     RichiestaInformazioni,
 )
+
+
+class GaraAdminForm(forms.ModelForm):
+    discipline = forms.MultipleChoiceField(
+        choices=Gara.DISCIPLINE_CHOICES,
+        widget=forms.CheckboxSelectMultiple,
+        label="Discipline",
+    )
+
+    class Meta:
+        model = Gara
+        fields = "__all__"
+
+
+class DichiarazioneGaraInlineFormSet(BaseInlineFormSet):
+    def clean(self):
+        super().clean()
+        if self.instance.pk or not self.instance.gara_id or any(self.errors):
+            return
+
+        for form in self.forms:
+            if not form.cleaned_data or form.cleaned_data.get("DELETE"):
+                continue
+            form.instance.iscrizione = self.instance
+            try:
+                form.instance.full_clean(exclude=("iscrizione",))
+            except ValidationError as error:
+                form.add_error(None, error)
+
+
+class DichiarazioneGaraInline(admin.TabularInline):
+    model = DichiarazioneGara
+    formset = DichiarazioneGaraInlineFormSet
+    extra = 1
+    can_delete = False
+    fields = ("disciplina", "distanza_m", "profondita_m", "tempo")
+    validate_min = True
+    validate_max = True
+    max_num = 1
+
+    def get_min_num(self, request, obj=None):
+        return 1 if obj is None else 0
+
+    def get_readonly_fields(self, request, obj=None):
+        return self.fields if obj is not None else ()
+
+    def has_add_permission(self, request, obj=None):
+        return obj is None and super().has_add_permission(request, obj)
+
+    def get_formset(self, request, obj=None, **kwargs):
+        formset = super().get_formset(request, obj, **kwargs)
+        gara = getattr(obj, "gara", None)
+        if gara is None:
+            gara_id = request.POST.get("gara") or request.GET.get("gara")
+            if gara_id and str(gara_id).isdigit():
+                gara = Gara.objects.filter(pk=gara_id).first()
+        if gara is not None and "disciplina" in formset.form.base_fields:
+            formset.form.base_fields["disciplina"].choices = [
+                choice
+                for choice in Gara.DISCIPLINE_CHOICES
+                if choice[0] in gara.discipline
+            ]
+        return formset
+
+
+class RisultatoGaraInline(admin.TabularInline):
+    model = RisultatoGara
+    extra = 0
+    can_delete = False
+    fields = ("disciplina", "distanza_m", "profondita_m", "tempo")
+    readonly_fields = fields
+
+
+@admin.register(Gara)
+class GaraAdmin(admin.ModelAdmin):
+    form = GaraAdminForm
+    list_display = (
+        "nome",
+        "data_gara",
+        "termine_iscrizioni",
+        "prezzo",
+        "pubblicata",
+    )
+    list_filter = ("pubblicata", "data_gara")
+    search_fields = ("nome", "luogo")
+    ordering = ("data_gara", "nome")
+
+
+@admin.register(IscrizioneGara)
+class IscrizioneGaraAdmin(admin.ModelAdmin):
+    list_display = (
+        "gara",
+        "socio",
+        "stato",
+        "richiesta_il",
+        "certificato_valido_alla_gara",
+        "email_conferma_inviata_il",
+    )
+    list_filter = ("stato", "gara")
+    search_fields = (
+        "gara__nome",
+        "socio__user__first_name",
+        "socio__user__last_name",
+        "socio__user__email",
+    )
+    readonly_fields = (
+        "gara",
+        "socio",
+        "stato",
+        "richiesta_il",
+        "confermata_il",
+        "certificato_valido_alla_gara",
+        "email_conferma_inviata_il",
+    )
+    inlines = (DichiarazioneGaraInline, RisultatoGaraInline)
+    actions = ("conferma_iscrizioni", "reinvia_email_conferme")
+
+    def get_fields(self, request, obj=None):
+        if obj is None:
+            return ("gara", "socio")
+        return super().get_fields(request, obj)
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return ()
+        return self.readonly_fields
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "socio":
+            kwargs["queryset"] = Socio.objects.filter(stato="ATTIVO").select_related(
+                "user"
+            )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(
+        boolean=True,
+        description="Certificato valido alla data della gara",
+    )
+    def certificato_valido_alla_gara(self, obj):
+        return obj.certificato_valido_alla_data_gara
+
+    @admin.action(description="Conferma le iscrizioni selezionate")
+    def conferma_iscrizioni(self, request, queryset):
+        confermate = 0
+        email_inviate = 0
+        email_da_inviare = 0
+        certificati_non_validi = 0
+        for iscrizione in queryset.select_related("gara", "socio__user"):
+            if not iscrizione.certificato_valido_alla_data_gara:
+                certificati_non_validi += 1
+                continue
+            modificata, email_inviata = conferma_iscrizione_gara(iscrizione)
+            if modificata:
+                confermate += 1
+                if email_inviata:
+                    email_inviate += 1
+                else:
+                    email_da_inviare += 1
+        self.message_user(
+            request,
+            f"Iscrizioni confermate: {confermate}. Email inviate: {email_inviate}.",
+            level=messages.SUCCESS,
+        )
+        if email_da_inviare:
+            self.message_user(
+                request,
+                f"Email non inviate: {email_da_inviare}. Verifica gli indirizzi "
+                "e la configurazione SMTP; puoi usare l'azione di reinvio.",
+                level=messages.WARNING,
+            )
+        if certificati_non_validi:
+            self.message_user(
+                request,
+                f"Iscrizioni non confermate: {certificati_non_validi}. "
+                "Il certificato medico manca o scade prima della gara.",
+                level=messages.ERROR,
+            )
+
+    @admin.action(description="Reinvia le email di conferma mancanti")
+    def reinvia_email_conferme(self, request, queryset):
+        da_inviare = queryset.filter(
+            stato="ISCRITTO",
+            email_conferma_inviata_il__isnull=True,
+        ).select_related("gara", "socio__user")
+        inviate = 0
+        certificati_non_validi = 0
+        for iscrizione in da_inviare:
+            if not iscrizione.certificato_valido_alla_data_gara:
+                certificati_non_validi += 1
+                continue
+            inviate += invia_email_conferma_gara(iscrizione)
+        self.message_user(
+            request,
+            f"Email di conferma inviate: {inviate}.",
+            level=messages.SUCCESS,
+        )
+        if certificati_non_validi:
+            self.message_user(
+                request,
+                f"Email non inviate: {certificati_non_validi}. Il certificato "
+                "medico manca o scade prima della gara.",
+                level=messages.ERROR,
+            )
+
 
 #Cosa fa questo codice?
 #Registra il nostro modello Socio nell'area di amministrazione.

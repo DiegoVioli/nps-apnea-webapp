@@ -59,6 +59,37 @@ prevedere backup verificati; non condividere lo stesso file SQLite tra più
 istanze applicative. Per deployment con più istanze, configurare un database
 server gestito e il relativo backend Django.
 
+## Gare agonistiche
+
+Lo staff crea e pubblica le gare da **Amministrazione > Gare**, indicando
+quota, data, termine d'iscrizione e discipline (DYN, DNF, STA, CWT, CNF e FIM).
+Le gare pubblicate sono visibili nell'area socio ai soci attivi; la quota è
+informativa, il gestionale non processa pagamenti.
+
+Ogni socio può iscriversi una sola volta per gara, scegliendo una sola delle
+discipline offerte. Dichiara distanza e tempo per DYN/DNF, tempo per STA,
+profondità e tempo per CWT/CNF/FIM. La richiesta resta **In attesa di conferma**
+fino a quando lo staff la conferma da **Amministrazione > Iscrizioni gare**.
+Finché resta in attesa e il termine d'iscrizione non è scaduto, il socio può
+modificare la dichiarazione dalla propria area. La conferma invia un'email; se
+l'invio fallisce, lo staff può riprovare con l'azione di reinvio nell'admin.
+Lo staff può anche aggiungere manualmente un socio attivo da
+**Amministrazione > Iscrizioni gare**, selezionando gara e dichiarazione; la
+nuova iscrizione resta in attesa fino alla conferma con l'azione dell'admin.
+Il certificato medico deve essere presente e valido almeno fino alla data
+della gara sia al momento della richiesta sia alla conferma; l'admin mostra
+un indicatore e blocca la conferma se il requisito non è soddisfatto. La data
+di invio email registrata sull'iscrizione distingue gli invii riusciti da quelli
+da riprovare.
+
+Le gare concluse e confermate compaiono nello storico del socio, che può
+inserire e aggiornare i risultati personali (distanza, profondità e tempo).
+Applicare la migration prima di distribuire la funzionalità:
+
+```powershell
+python manage.py migrate
+```
+
 ## Promemoria certificati medici
 
 Il comando Django `invia_promemoria_certificati` invia un'email ai soci iscritti

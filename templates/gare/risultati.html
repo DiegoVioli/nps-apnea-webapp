@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Risultati gara - NPS Apnea</title>
+    <style>
+        body { margin: 0; padding: 24px; color: #14324b; background: #f3f7fa; font-family: system-ui, sans-serif; }
+        main { max-width: 720px; margin: 30px auto; padding: 28px; background: #fff; border: 1px solid #e2eaf0; border-radius: 16px; }
+        h1 { margin-top: 0; }
+        .details { color: #62768a; line-height: 1.7; }
+        label { display: block; margin-top: 18px; font-weight: 650; }
+        input { width: 100%; max-width: 320px; margin-top: 6px; padding: 10px; border: 1px solid #cbd9e1; border-radius: 8px; font: inherit; }
+        .helptext { color: #62768a; font-size: 13px; }
+        .errorlist { color: #b13d3d; }
+        button, .back { display: inline-block; margin-top: 20px; padding: 10px 15px; border: 0; border-radius: 9px; font: inherit; font-weight: 700; text-decoration: none; }
+        button { color: #fff; background: #087f82; cursor: pointer; }
+        .back { margin-left: 8px; color: #14324b; background: #eaf0f4; }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Storico prestazioni</h1>
+        <h2>{{ iscrizione.gara.nome }}</h2>
+        <p class="details">
+            Data: {{ iscrizione.gara.data_gara|date:"d/m/Y" }}<br>
+            Disciplina scelta:
+            {% for dichiarazione in iscrizione.dichiarazioni.all %}
+                {{ dichiarazione.get_disciplina_display }}
+            {% endfor %}
+        </p>
+        <p>Inserisci i risultati facoltativi. Potrai modificarli in seguito.</p>
+        <form method="post">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+            {{ form.as_p }}
+            <button type="submit">Salva risultati</button>
+            <a class="back" href="{% url 'dashboard' %}">Torna all'area socio</a>
+        </form>
+    </main>
+</body>
+</html>
