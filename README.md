@@ -1,5 +1,64 @@
 # nps-apnea-webapp
 
+## Setup iniziale
+
+Prima di avviare l'applicazione, creare un file `.env` partendo da `.env.example` e personalizzarne i valori:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Le variabili principali sono:
+
+- `SECRET_KEY`
+- `DEBUG`
+- `ALLOWED_HOSTS`
+- `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_USE_SSL`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`
+- `CERTIFICATI_API_TOKEN`
+- `CONSENSO_*_URL` e `CONSENSO_*_VERSIONE`
+
+Il file `.env` non va mai committato nel repository.
+
+## Avvio in produzione
+
+Non usare i valori di sviluppo di `.env.example` in produzione. Configurare
+nell'ambiente del server o nel secret manager:
+
+- `DEBUG=False`
+- `SECRET_KEY`: chiave casuale dedicata all'ambiente, di almeno 50 caratteri.
+  Generarla con `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"`.
+- `ALLOWED_HOSTS`: solo i nomi host pubblici, senza schema o porte, separati da
+  virgole (per esempio `app.example.org`).
+- `CSRF_TRUSTED_ORIGINS`: origini complete con schema HTTPS, separate da
+  virgole (per esempio `https://app.example.org`).
+- credenziali SMTP e `CERTIFICATI_API_TOKEN`, se si usano le relative
+  funzionalità.
+- versioni definitive e URL dei documenti di consenso.
+
+Con `DEBUG=False`, Django attiva per default il redirect HTTPS, i cookie
+`Secure` e HSTS per un anno. Servire il sito solo tramite HTTPS prima di
+abilitare la produzione. Se TLS termina su un reverse proxy, impostare
+`USE_X_FORWARDED_PROTO=True` soltanto quando il proxy di fiducia rimuove e
+riscrive sempre l'header `X-Forwarded-Proto`; non abilitarlo se quell'header può
+essere fornito direttamente dal client. Impostare `SECURE_SSL_REDIRECT=False`
+solo se il redirect HTTPS è gestito in modo affidabile a monte.
+HSTS per sottodomini e preload non sono attivi per default: abilitarli solo
+dopo aver verificato che tutti i sottodomini siano serviti esclusivamente via
+HTTPS e aver deciso di rendere permanente tale policy nei browser.
+
+Prima del rilascio, eseguire:
+
+```powershell
+python manage.py check --deploy
+python manage.py migrate
+python manage.py collectstatic --noinput
+```
+
+Il database predefinito resta SQLite: conservarlo su disco persistente e
+prevedere backup verificati; non condividere lo stesso file SQLite tra più
+istanze applicative. Per deployment con più istanze, configurare un database
+server gestito e il relativo backend Django.
+
 ## Promemoria certificati medici
 
 Il comando Django `invia_promemoria_certificati` invia un'email ai soci iscritti

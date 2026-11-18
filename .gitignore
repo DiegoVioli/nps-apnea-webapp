@@ -3,8 +3,25 @@ venv/
 env/
 ENV/
 
+# Variabili ambientali e segreti
+.env
+.env.*
+!.env.example
+
 # Database locale di sviluppo
 db.sqlite3
+*.sqlite3
+*.db
+
+# Log e file generati
+*.log
+*.pid
+staticfiles/
+media/
+uploads/
+coverage.xml
+.coverage
+.pytest_cache/
 
 # Cache di Python
 __pycache__/

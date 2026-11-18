@@ -13,7 +13,7 @@ from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .consensi import TIPI_CONSENSO, versioni_consenso_attuali
+from .consensi import TIPI_CONSENSO, consensi_mancanti, versioni_consenso_attuali
 from .admin import RichiestaInformazioniAdmin
 from .forms import SocioLoginForm
 from .models import (
@@ -443,6 +443,77 @@ class ApiPromemoriaTests(TestCase):
         )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(PromemoriaCertificato.objects.count(), 1)
+
+    def test_api_rejects_invalid_json_and_duplicate_members_in_same_batch(self):
+        url = reverse("api_registra_promemoria_inviati")
+
+        response = self.client.post(
+            url,
+            data="not-json",
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON valido", response.json()["errore"])
+
+        socio = self.crea_socio(
+            "duplicato_api",
+            timezone.localdate() + timedelta(days=12),
+        )
+        payload = {
+            "inviati": [
+                {"socio_id": socio.pk, "data_scadenza": socio.scadenza_certificato_medico.isoformat()},
+                {"socio_id": socio.pk, "data_scadenza": socio.scadenza_certificato_medico.isoformat()},
+            ]
+        }
+
+        response = self.client.post(
+            url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Elenco non valido", response.json()["errore"])
+
+    def test_api_rejects_inactive_members_and_changed_certificate_dates(self):
+        oggi = timezone.localdate()
+        socio = self.crea_socio("sospeso_api", oggi + timedelta(days=9), stato="SOSPESO")
+        payload = {
+            "inviati": [
+                {
+                    "socio_id": socio.pk,
+                    "data_scadenza": socio.scadenza_certificato_medico.isoformat(),
+                }
+            ]
+        }
+
+        response = self.client.post(
+            reverse("api_registra_promemoria_inviati"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+        self.assertEqual(response.status_code, 409)
+
+        socio_attivo = self.crea_socio("cambiata_api", oggi + timedelta(days=7))
+        payload = {
+            "inviati": [
+                {
+                    "socio_id": socio_attivo.pk,
+                    "data_scadenza": (oggi + timedelta(days=6)).isoformat(),
+                }
+            ]
+        }
+
+        response = self.client.post(
+            reverse("api_registra_promemoria_inviati"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer token-di-test",
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(PromemoriaCertificato.objects.count(), 0)
 
 
 class FlussoSocioTest(TestCase):
@@ -1074,6 +1145,36 @@ class ConsensoSocioTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(ConsensoSocio.objects.filter(socio=self.socio).count(), 0)
+
+    def test_outdated_consents_are_treated_as_missing_until_renewed(self):
+        ConsensoSocio.objects.create(
+            socio=self.socio,
+            tipo="REGOLAMENTO",
+            versione_modulo="0.9",
+            accettato_il=timezone.now() - timedelta(days=10),
+            indirizzo_ip="127.0.0.1",
+        )
+        ConsensoSocio.objects.create(
+            socio=self.socio,
+            tipo="PRIVACY",
+            versione_modulo="0.9",
+            accettato_il=timezone.now() - timedelta(days=10),
+            indirizzo_ip="127.0.0.1",
+        )
+
+        self.assertEqual(
+            consensi_mancanti(self.socio),
+            ["REGOLAMENTO", "PRIVACY", "FOTO_VIDEO"],
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.post(reverse("consensi"), self.dati_consensi())
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertEqual(
+            ConsensoSocio.objects.filter(socio=self.socio).count(),
+            5,
+        )
 
     def test_registration_requires_each_consent(self):
         response = self.client.post(
