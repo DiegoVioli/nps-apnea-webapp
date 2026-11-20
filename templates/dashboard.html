@@ -214,12 +214,16 @@
 
         .activity-grid {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: minmax(0, 1fr);
             gap: 20px;
             align-items: start;
         }
 
-        .history-panel { grid-column: 1 / -1; }
+        .panel-available { order: 1; }
+        .panel-courses { order: 2; }
+        .panel-races, .panel-outings { order: 3; grid-column: 1 / -1; }
+        .panel-enrolled { order: 4; }
+        .history-panel { order: 5; grid-column: 1 / -1; }
         .history-list {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -307,6 +311,11 @@
             border-radius: 12px;
         }
 
+        .activity-item-available {
+            background: #f3fbfa;
+            border-color: #8ecfca;
+        }
+
         .activity-item h3 { margin-bottom: 7px; font-size: 15px; }
         .activity-item p { margin-bottom: 6px; color: var(--muted); font-size: 13px; }
         .activity-item p:last-of-type { margin-bottom: 0; }
@@ -390,10 +399,6 @@
         {% endif %}
         <form class="logout-form" action="{% url 'logout' %}" method="post">
             {% csrf_token %}
-            {% if user.is_staff %}
-                <a class="logout-button" href="{% url 'pagina_staff_certificati' %}" style="text-decoration: none;">Certificati soci</a>
-                <a class="logout-button" href="{% url 'admin:index' %}" style="text-decoration: none;">Amministrazione</a>
-            {% endif %}
             <button class="logout-button" type="submit">Esci</button>
         </form>
     </header>
@@ -463,12 +468,12 @@
         <div class="section-heading">
             <div>
                 <h2>Le tue attività</h2>
-                <p>Gestisci i tuoi allenamenti e scopri i corsi disponibili.</p>
+                <p>Prima le opportunità aperte, poi le tue iscrizioni; gli storici sono in fondo.</p>
             </div>
         </div>
 
         <div class="activity-grid">
-            <section class="panel" aria-labelledby="training-title">
+            <section class="panel {% if abbonamento_attivo %}panel-enrolled{% else %}panel-available{% endif %}" aria-labelledby="training-title">
                 <div class="panel-heading">
                     <span class="panel-icon" aria-hidden="true">↗</span>
                     <div>
@@ -479,6 +484,7 @@
 
                 {% if abbonamento_attivo %}
                     <div class="activity-item">
+                        <span class="detail-badge badge-good">Abbonamento attivo</span>
                         <h3>{{ abbonamento_attivo.pacchetto.nome }}</h3>
                         <p>{{ abbonamento_attivo.stagione }}</p>
                         <p>
@@ -487,6 +493,14 @@
                             al
                             {{ abbonamento_attivo.data_fine|date:"d/m/Y"|default:"Non definito" }}
                         </p>
+                        <p>
+                            Disiscrizione entro:
+                            {{ abbonamento_attivo.termine_disiscrizione|date:"d/m/Y"|default:"Termine non configurato" }}
+                        </p>
+                        <p>Entro questa data puoi annullare e chiedere il rimborso della caparra; dopo la scadenza non potrai più annullare e la caparra sarà persa.</p>
+                        {% if abbonamento_attivo.caparra %}
+                            <p>Caparra: € {{ abbonamento_attivo.caparra }}</p>
+                        {% endif %}
                         {% with turni=abbonamento_attivo.pacchetto.turni.all %}
                             {% if turni %}
                                 <ul>
@@ -496,10 +510,19 @@
                                 </ul>
                             {% endif %}
                         {% endwith %}
+                        {% if iscrizione_abbonamento_attiva and abbonamento_attivo.termine_disiscrizione and abbonamento_attivo.termine_disiscrizione|date:"Y-m-d" >= oggi|date:"Y-m-d" %}
+                            <form action="{% url 'annulla_iscrizione' 'abbonamento' iscrizione_abbonamento_attiva.pk %}" method="post">
+                                {% csrf_token %}
+                                <button class="button-link" type="submit">Annulla abbonamento</button>
+                            </form>
+                        {% else %}
+                            <p>Il termine per disiscriversi è scaduto o non è stato configurato.</p>
+                        {% endif %}
                     </div>
                 {% else %}
                     {% for abbonamento in abbonamenti_disponibili %}
-                        <article class="activity-item">
+                        <article class="activity-item activity-item-available">
+                            <span class="detail-badge badge-good">Disponibile</span>
                             <h3>{{ abbonamento.pacchetto.nome }}</h3>
                             <p>{{ abbonamento.stagione }}</p>
                             <p>
@@ -507,6 +530,14 @@
                                 al {{ abbonamento.data_fine|date:"d/m/Y" }}
                             </p>
                             <p class="item-price">€ {{ abbonamento.prezzo }}</p>
+                            <p>
+                                Disiscrizione entro:
+                                {{ abbonamento.termine_disiscrizione|date:"d/m/Y"|default:"Termine non configurato" }}
+                            </p>
+                            <p>Entro questa data puoi annullare e chiedere il rimborso della caparra; dopo la scadenza non potrai più annullare e la caparra sarà persa.</p>
+                            {% if abbonamento.caparra %}
+                                <p>Caparra: € {{ abbonamento.caparra }}</p>
+                            {% endif %}
                             <ul>
                                 {% for turno in abbonamento.pacchetto.turni.all %}
                                     <li>{{ turno.get_giorno_display }} dalle {{ turno.orario_inizio|time:"H:i" }}</li>
@@ -522,18 +553,21 @@
                 {% endif %}
             </section>
 
-            <section class="panel" aria-labelledby="courses-title">
+            <section class="panel panel-courses" aria-labelledby="courses-title">
                 <div class="panel-heading">
                     <span class="panel-icon" aria-hidden="true">◎</span>
                     <div>
                         <h2 id="courses-title">Corsi disponibili</h2>
-                        <p>Le prossime edizioni aperte alle iscrizioni</p>
+                        <p>Prima le edizioni aperte, poi quelle a cui sei già iscritto</p>
                     </div>
                 </div>
 
                 <div class="item-list">
                     {% for edizione in edizioni_aperte %}
-                        <article class="activity-item">
+                        <article class="activity-item{% if edizione.iscrivibile %} activity-item-available{% endif %}">
+                            {% if edizione.iscrivibile %}
+                                <span class="detail-badge badge-good">Iscrizioni aperte</span>
+                            {% endif %}
                             <h3>{{ edizione.corso.nome }}</h3>
                             <p>{{ edizione.corso.descrizione }}</p>
                             <p>
@@ -541,9 +575,46 @@
                                 al {{ edizione.data_fine|date:"d/m/Y"|default:"Non definito" }}
                             </p>
                             <p class="item-price">€ {{ edizione.prezzo }}</p>
-                            <a class="button-link" href="#">
-                                Dettagli e iscrizione
-                            </a>
+                            <p>
+                                Iscrizioni entro:
+                                {{ edizione.termine_iscrizioni|date:"d/m/Y"|default:"Termine non configurato" }}
+                            </p>
+                            <p>
+                                Disiscrizioni entro:
+                                {{ edizione.termine_disiscrizione|date:"d/m/Y"|default:"Termine non configurato" }}.
+                                Dopo la scadenza non potrai più annullare e l'eventuale caparra sarà persa.
+                            </p>
+                            {% if edizione.caparra %}
+                                <p>Caparra: € {{ edizione.caparra }}</p>
+                            {% endif %}
+                            {% with iscrizioni=edizione.iscrizioni_del_socio %}
+                                {% if iscrizioni %}
+                                    {% with iscrizione=iscrizioni.0 %}
+                                        <span class="detail-badge {% if iscrizione.stato == 'ATTIVA' %}badge-good{% else %}badge-warning{% endif %}">
+                                            {{ iscrizione.get_stato_display }}
+                                        </span>
+                                        {% if iscrizione.stato == "ATTIVA" %}
+                                            {% if edizione.termine_disiscrizione and edizione.termine_disiscrizione|date:"Y-m-d" >= oggi|date:"Y-m-d" %}
+                                                <form action="{% url 'annulla_iscrizione' 'corso' iscrizione.pk %}" method="post">
+                                                    {% csrf_token %}
+                                                    <button class="button-link" type="submit">Annulla iscrizione</button>
+                                                </form>
+                                            {% else %}
+                                                <p>Il termine per disiscriversi è scaduto o non è stato configurato.</p>
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endwith %}
+                                {% elif edizione.iscrivibile %}
+                                    <form action="{% url 'richiedi_iscrizione_corso' edizione.pk %}" method="post">
+                                        {% csrf_token %}
+                                        <button class="button-link" type="submit">Iscriviti al corso</button>
+                                    </form>
+                                {% elif edizione.iscritti_attivi_count >= edizione.posti_massimi %}
+                                    <span class="detail-badge badge-warning">Posti esauriti</span>
+                                {% else %}
+                                    <span class="detail-badge badge-warning">Iscrizioni chiuse o non configurate</span>
+                                {% endif %}
+                            {% endwith %}
                         </article>
                     {% empty %}
                         <p class="empty-state">Al momento non ci sono nuovi corsi a cui iscriverti.</p>
@@ -551,26 +622,37 @@
                 </div>
             </section>
 
-            <section class="panel history-panel" aria-labelledby="races-title">
+            <section class="panel panel-races" aria-labelledby="races-title">
                 <div class="panel-heading">
                     <span class="panel-icon" aria-hidden="true">⌁</span>
                     <div>
                         <h2 id="races-title">Gare</h2>
-                        <p>Gare future, richieste d'iscrizione e conferme</p>
+                        <p>Prima le gare a cui puoi iscriverti, poi le tue richieste</p>
                     </div>
                 </div>
 
                 <div class="item-list">
                     {% for elemento in gare_prossime %}
                         {% with gara=elemento.gara iscrizione=elemento.iscrizione %}
-                            <article class="activity-item">
+                            <article class="activity-item{% if elemento.iscrivibile %} activity-item-available{% endif %}">
+                                {% if elemento.iscrivibile %}
+                                    <span class="detail-badge badge-good">Iscrizioni aperte</span>
+                                {% endif %}
                                 <h3>{{ gara.nome }}</h3>
                                 <p>
                                     Data: {{ gara.data_gara|date:"d/m/Y" }}
                                     {% if gara.luogo %}· Luogo: {{ gara.luogo }}{% endif %}
                                 </p>
                                 <p>Iscrizioni entro: {{ gara.termine_iscrizioni|date:"d/m/Y" }}</p>
+                                <p>
+                                    Disiscrizione entro:
+                                    {{ gara.termine_disiscrizione|date:"d/m/Y"|default:"Termine non configurato" }}
+                                </p>
+                                <p>Dopo la scadenza non potrai più annullare e l'eventuale caparra sarà persa.</p>
                                 <p class="item-price">Quota: € {{ gara.prezzo }}</p>
+                                {% if gara.caparra %}
+                                    <p>Caparra: € {{ gara.caparra }}</p>
+                                {% endif %}
                                 <p>Discipline disponibili: {{ gara.discipline_display }}</p>
 
                                 {% if iscrizione %}
@@ -595,6 +677,14 @@
                                             Modifica dichiarazione
                                         </a>
                                     {% endif %}
+                                    {% if iscrizione.stato != "ANNULLATA" and gara.termine_disiscrizione and gara.termine_disiscrizione|date:"Y-m-d" >= oggi|date:"Y-m-d" %}
+                                        <form action="{% url 'annulla_iscrizione' 'gara' iscrizione.pk %}" method="post">
+                                            {% csrf_token %}
+                                            <button class="button-link" type="submit">Annulla iscrizione</button>
+                                        </form>
+                                    {% elif iscrizione.stato != "ANNULLATA" %}
+                                        <p>Il termine per disiscriversi è scaduto o non è stato configurato.</p>
+                                    {% endif %}
                                 {% elif gara.termine_iscrizioni|date:"Y-m-d" >= oggi %}
                                     {% if elemento.certificato_valido %}
                                         <a class="button-link" href="{% url 'richiedi_iscrizione_gara' gara.pk %}">
@@ -612,6 +702,66 @@
                         {% endwith %}
                     {% empty %}
                         <p class="empty-state">Al momento non ci sono gare pubblicate.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="panel panel-outings" aria-labelledby="outings-title">
+                <div class="panel-heading">
+                    <span class="panel-icon" aria-hidden="true">⌖</span>
+                    <div>
+                        <h2 id="outings-title">Uscite e altre attività</h2>
+                        <p>Prima le attività aperte, poi quelle a cui sei già iscritto</p>
+                    </div>
+                </div>
+                <div class="item-list">
+                    {% for attivita in attivita_disponibili %}
+                        <article class="activity-item{% if attivita.iscrivibile %} activity-item-available{% endif %}">
+                            {% if attivita.iscrivibile %}
+                                <span class="detail-badge badge-good">Iscrizioni aperte</span>
+                            {% endif %}
+                            <h3>{{ attivita.nome }}</h3>
+                            <p>{{ attivita.get_tipo_display }} · {{ attivita.data|date:"d/m/Y" }} · {{ attivita.luogo }}</p>
+                            {% if attivita.descrizione %}<p>{{ attivita.descrizione }}</p>{% endif %}
+                            <p>Iscrizioni entro: {{ attivita.termine_iscrizioni|date:"d/m/Y" }}</p>
+                            <p>Disiscrizioni entro: {{ attivita.termine_disiscrizione|date:"d/m/Y" }}</p>
+                            {% if attivita.caparra and attivita.caparra > 0 %}
+                                <p>Entro questa data puoi annullare e chiedere il rimborso della caparra; dopo la scadenza non potrai più annullare e la caparra sarà persa.</p>
+                            {% endif %}
+                            {% if attivita.prezzo %}<p class="item-price">Quota: € {{ attivita.prezzo }}</p>{% endif %}
+                            {% if attivita.caparra %}<p>Caparra: € {{ attivita.caparra }}</p>{% endif %}
+                            {% with iscrizioni=attivita.iscrizioni_del_socio %}
+                                {% if iscrizioni %}
+                                    {% with iscrizione=iscrizioni.0 %}
+                                        <span class="detail-badge {% if iscrizione.stato == 'ATTIVA' %}badge-good{% else %}badge-warning{% endif %}">
+                                            {{ iscrizione.get_stato_display }}
+                                        </span>
+                                        {% if iscrizione.stato == "ATTIVA" and attivita.termine_disiscrizione|date:"Y-m-d" >= oggi|date:"Y-m-d" %}
+                                            <form action="{% url 'annulla_iscrizione' 'attivita' iscrizione.pk %}" method="post">
+                                                {% csrf_token %}
+                                                <button class="button-link" type="submit">Annulla iscrizione</button>
+                                            </form>
+                                        {% elif iscrizione.stato == "ATTIVA" %}
+                                            <p>Il termine per disiscriversi è scaduto.</p>
+                                        {% elif attivita.iscrivibile %}
+                                            <form action="{% url 'richiedi_iscrizione_attivita' attivita.pk %}" method="post">
+                                                {% csrf_token %}
+                                                <button class="button-link" type="submit">Iscriviti di nuovo</button>
+                                            </form>
+                                        {% endif %}
+                                    {% endwith %}
+                                {% elif attivita.iscrivibile %}
+                                    <form action="{% url 'richiedi_iscrizione_attivita' attivita.pk %}" method="post">
+                                        {% csrf_token %}
+                                        <button class="button-link" type="submit">Iscriviti</button>
+                                    </form>
+                                {% else %}
+                                    <span class="detail-badge badge-warning">Iscrizioni chiuse</span>
+                                {% endif %}
+                            {% endwith %}
+                        </article>
+                    {% empty %}
+                        <p class="empty-state">Al momento non ci sono uscite o altre attività disponibili.</p>
                     {% endfor %}
                 </div>
             </section>

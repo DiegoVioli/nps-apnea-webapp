@@ -18,11 +18,14 @@ from .admin import RichiestaInformazioniAdmin
 from .forms import SocioLoginForm
 from .gare import conferma_iscrizione_gara, invia_email_conferma_gara
 from .models import (
+    Attivita,
     ConsensoSocio,
     Corso,
     DichiarazioneGara,
     EdizioneCorso,
     Gara,
+    IscrizioneAttivita,
+    IscrizioneCorso,
     IscrizioneGara,
     IscrizioneAbbonamento,
     ModificaScadenzaCertificato,
@@ -839,8 +842,9 @@ class DashboardTests(TestCase):
                 self.assertContains(
                     response,
                     reverse("pagina_staff_certificati"),
+                    count=1,
                 )
-                self.assertContains(response, reverse("admin:index"))
+                self.assertContains(response, reverse("admin:index"), count=1)
             else:
                 self.assertNotContains(
                     response,
@@ -1292,6 +1296,7 @@ class GareTests(TestCase):
             "luogo": "Piscina comunale",
             "data_gara": self.oggi + timedelta(days=30),
             "termine_iscrizioni": self.oggi + timedelta(days=20),
+            "termine_disiscrizione": self.oggi + timedelta(days=10),
             "prezzo": "25.00",
             "discipline": ["DYN", "STA", "CNF", "FIM", "DNF", "CWT"],
         }
@@ -1325,6 +1330,27 @@ class GareTests(TestCase):
             reverse("richiedi_iscrizione_gara", args=(self.gara.pk,)),
         )
 
+    def test_available_races_appear_before_races_with_enrollment_requests(self):
+        gara_iscritta = self.crea_gara(
+            nome="Gara già richiesta",
+            data_gara=self.oggi + timedelta(days=5),
+            termine_iscrizioni=self.oggi + timedelta(days=3),
+            termine_disiscrizione=self.oggi + timedelta(days=2),
+        )
+        IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=gara_iscritta,
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("dashboard"))
+        contenuto = response.content.decode()
+
+        self.assertLess(
+            contenuto.index(self.gara.nome),
+            contenuto.index(gara_iscritta.nome),
+        )
+
     def test_staff_can_create_a_race_from_django_admin(self):
         staff = User.objects.create_superuser(
             username="staff_gare",
@@ -1340,6 +1366,7 @@ class GareTests(TestCase):
                 "luogo": "Piscina",
                 "data_gara": (self.oggi + timedelta(days=40)).isoformat(),
                 "termine_iscrizioni": (self.oggi + timedelta(days=30)).isoformat(),
+                "termine_disiscrizione": (self.oggi + timedelta(days=20)).isoformat(),
                 "prezzo": "35.00",
                 "discipline": ["DYN", "STA", "FIM"],
                 "pubblicata": "on",
@@ -1501,6 +1528,25 @@ class GareTests(TestCase):
         self.assertEqual(str(dichiarazione_cnf.profondita_m), "40.00")
         self.assertEqual(dichiarazione_cnf.tempo, timedelta(minutes=2))
         self.assertEqual(len(mail.outbox), 0)
+
+    def test_member_can_cancel_race_registration_by_the_deadline(self):
+        iscrizione = IscrizioneGara.objects.create(
+            socio=self.socio,
+            gara=self.gara,
+            stato="ISCRITTO",
+        )
+        self.gara.termine_disiscrizione = self.oggi
+        self.gara.save(update_fields=("termine_disiscrizione",))
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("annulla_iscrizione", args=("gara", iscrizione.pk))
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ANNULLATA")
+        self.assertIsNotNone(iscrizione.annullata_il)
 
     def test_member_can_edit_declaration_while_enrollment_is_pending(self):
         iscrizione = IscrizioneGara.objects.create(
@@ -1948,3 +1994,289 @@ class ConsensoSocioAdminTests(TestCase):
         self.assertContains(response, "PRIVACY")
         self.assertContains(response, "1.0")
         self.assertContains(response, "127.0.0.1")
+
+
+@override_settings(DOCUMENTI_CONSENSO=DOCUMENTI_CONSENSO_TEST)
+class IscrizioniAttivitaTests(TestCase):
+    def setUp(self):
+        self.oggi = timezone.localdate()
+        self.user = User.objects.create_user(username="socio_attivita")
+        self.socio = Socio.objects.create(
+            user=self.user,
+            codice_fiscale="ISCRIZIONECORSO",
+            data_nascita=self.oggi - timedelta(days=365 * 30),
+            stato="ATTIVO",
+        )
+        ConsensoSocio.objects.bulk_create(
+            [
+                ConsensoSocio(
+                    socio=self.socio,
+                    tipo=tipo,
+                    versione_modulo=DOCUMENTI_CONSENSO_TEST[chiave]["versione"],
+                    accettato_il=timezone.now(),
+                )
+                for tipo, chiave, _ in TIPI_CONSENSO
+            ]
+        )
+        self.corso = Corso.objects.create(
+            nome="Corso iscrizioni",
+            descrizione="Corso di prova",
+        )
+        self.edizione = EdizioneCorso.objects.create(
+            corso=self.corso,
+            data_inizio=self.oggi + timedelta(days=10),
+            data_fine=self.oggi + timedelta(days=12),
+            termine_iscrizioni=self.oggi + timedelta(days=5),
+            termine_disiscrizione=self.oggi,
+            posti_massimi=2,
+            prezzo="100.00",
+        )
+        self.attivita = Attivita.objects.create(
+            nome="Uscita al lago",
+            tipo="USCITA_LAGO",
+            data=self.oggi + timedelta(days=5),
+            luogo="Lago di Garda",
+            termine_iscrizioni=self.oggi + timedelta(days=3),
+            termine_disiscrizione=self.oggi + timedelta(days=2),
+        )
+        self.client.force_login(self.user)
+
+    def test_member_can_enroll_in_and_cancel_course_by_the_deadline(self):
+        response = self.client.post(
+            reverse("richiedi_iscrizione_corso", args=(self.edizione.pk,))
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione = IscrizioneCorso.objects.get(
+            socio=self.socio,
+            edizione=self.edizione,
+        )
+        self.assertEqual(iscrizione.stato, "ATTIVA")
+
+        response = self.client.post(
+            reverse(
+                "annulla_iscrizione",
+                args=("corso", iscrizione.pk),
+            )
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ANNULLATA")
+        self.assertIsNotNone(iscrizione.annullata_il)
+
+    def test_activity_registration_and_cancellation_are_available_to_members(self):
+        response_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(response_dashboard, "Uscita al lago")
+        self.assertContains(response_dashboard, "Lago di Garda")
+        self.assertNotContains(
+            response_dashboard,
+            "Entro questa data puoi annullare e chiedere il rimborso della caparra",
+        )
+
+        self.attivita.caparra = "0.00"
+        self.attivita.save(update_fields=("caparra",))
+        response_dashboard = self.client.get(reverse("dashboard"))
+        self.assertNotContains(
+            response_dashboard,
+            "Entro questa data puoi annullare e chiedere il rimborso della caparra",
+        )
+
+        self.attivita.caparra = "10.00"
+        self.attivita.save(update_fields=("caparra",))
+        response_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(
+            response_dashboard,
+            "Entro questa data puoi annullare e chiedere il rimborso della caparra",
+        )
+
+        response = self.client.post(
+            reverse(
+                "richiedi_iscrizione_attivita",
+                args=(self.attivita.pk,),
+            )
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione = IscrizioneAttivita.objects.get(
+            socio=self.socio,
+            attivita=self.attivita,
+        )
+        response = self.client.post(
+            reverse("annulla_iscrizione", args=("attivita", iscrizione.pk))
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ANNULLATA")
+        response_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(response_dashboard, "Iscriviti di nuovo")
+
+        response = self.client.post(
+            reverse(
+                "richiedi_iscrizione_attivita",
+                args=(self.attivita.pk,),
+            )
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizioni = IscrizioneAttivita.objects.filter(
+            socio=self.socio,
+            attivita=self.attivita,
+        ).order_by("data_iscrizione", "pk")
+        self.assertEqual(iscrizioni.count(), 2)
+        self.assertEqual(
+            list(iscrizioni.values_list("stato", flat=True)),
+            ["ANNULLATA", "ATTIVA"],
+        )
+        self.assertContains(
+            self.client.get(reverse("dashboard")),
+            "Annulla iscrizione",
+        )
+
+    def test_available_courses_and_activities_appear_before_enrolled_ones(self):
+        corso_iscritto = Corso.objects.create(
+            nome="Corso già frequentato",
+            descrizione="Corso in cui il socio è già iscritto",
+        )
+        edizione_iscritta = EdizioneCorso.objects.create(
+            corso=corso_iscritto,
+            data_inizio=self.oggi + timedelta(days=1),
+            data_fine=self.oggi + timedelta(days=2),
+            termine_iscrizioni=self.oggi,
+            termine_disiscrizione=self.oggi,
+            posti_massimi=2,
+            prezzo="50.00",
+        )
+        IscrizioneCorso.objects.create(
+            socio=self.socio,
+            edizione=edizione_iscritta,
+        )
+        IscrizioneAttivita.objects.create(
+            socio=self.socio,
+            attivita=self.attivita,
+        )
+        attivita_disponibile = Attivita.objects.create(
+            nome="Uscita disponibile più avanti",
+            tipo="USCITA_MARE",
+            data=self.oggi + timedelta(days=8),
+            luogo="Mare",
+            termine_iscrizioni=self.oggi + timedelta(days=6),
+            termine_disiscrizione=self.oggi + timedelta(days=4),
+        )
+
+        response = self.client.get(reverse("dashboard"))
+        contenuto = response.content.decode()
+
+        self.assertLess(
+            contenuto.index("Corso iscrizioni"),
+            contenuto.index("Corso già frequentato"),
+        )
+        self.assertLess(
+            contenuto.index(attivita_disponibile.nome),
+            contenuto.index(self.attivita.nome),
+        )
+
+    def test_activity_cannot_be_rejoined_after_registration_deadline(self):
+        iscrizione = IscrizioneAttivita.objects.create(
+            socio=self.socio,
+            attivita=self.attivita,
+            stato="ANNULLATA",
+            annullata_il=timezone.now(),
+        )
+        self.attivita.termine_iscrizioni = self.oggi - timedelta(days=1)
+        self.attivita.save(update_fields=("termine_iscrizioni",))
+
+        response_dashboard = self.client.get(reverse("dashboard"))
+        self.assertNotContains(response_dashboard, "Iscriviti di nuovo")
+        response = self.client.post(
+            reverse(
+                "richiedi_iscrizione_attivita",
+                args=(self.attivita.pk,),
+            ),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "iscrizioni a questa attività sono chiuse")
+        self.assertEqual(
+            IscrizioneAttivita.objects.filter(
+                socio=self.socio,
+                attivita=self.attivita,
+            ).count(),
+            1,
+        )
+
+    def test_cancellation_after_deadline_preserves_active_registration(self):
+        iscrizione = IscrizioneAttivita.objects.create(
+            socio=self.socio,
+            attivita=self.attivita,
+        )
+        self.attivita.termine_disiscrizione = self.oggi - timedelta(days=1)
+        self.attivita.save(update_fields=("termine_disiscrizione",))
+
+        response = self.client.post(
+            reverse("annulla_iscrizione", args=("attivita", iscrizione.pk)),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        iscrizione.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ATTIVA")
+        self.assertContains(response, "termine per annullare")
+
+    def test_cancelling_subscription_keeps_history_and_clears_active_pointer(self):
+        pacchetto = PacchettoAbbonamento.objects.create(nome="Allenamento stagionale")
+        abbonamento = StagioneAbbonamento.objects.create(
+            pacchetto=pacchetto,
+            stagione="2026/2027",
+            prezzo="180.00",
+            data_inizio=self.oggi,
+            data_fine=self.oggi + timedelta(days=100),
+            termine_disiscrizione=self.oggi,
+        )
+        iscrizione = IscrizioneAbbonamento.objects.create(
+            socio=self.socio,
+            abbonamento=abbonamento,
+        )
+        self.socio.abbonamento_sottoscritto = abbonamento
+        self.socio.save(update_fields=("abbonamento_sottoscritto",))
+
+        response = self.client.post(
+            reverse("annulla_iscrizione", args=("abbonamento", iscrizione.pk))
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        iscrizione.refresh_from_db()
+        self.socio.refresh_from_db()
+        self.assertEqual(iscrizione.stato, "ANNULLATA")
+        self.assertIsNotNone(iscrizione.annullata_il)
+        self.assertIsNone(self.socio.abbonamento_sottoscritto)
+
+    def test_staff_can_create_an_outing_in_django_admin(self):
+        staff = User.objects.create_superuser(
+            username="staff_uscita",
+            email="staff@example.com",
+            password="StrongPass!4831",
+        )
+        self.client.force_login(staff)
+
+        response = self.client.post(
+            reverse("admin:anagrafica_attivita_add"),
+            {
+                "nome": "Uscita a Y-40",
+                "tipo": "Y40",
+                "descrizione": "Giornata in immersione.",
+                "data": (self.oggi + timedelta(days=20)).isoformat(),
+                "luogo": "Y-40",
+                "termine_iscrizioni": (self.oggi + timedelta(days=10)).isoformat(),
+                "termine_disiscrizione": (self.oggi + timedelta(days=5)).isoformat(),
+                "prezzo": "50.00",
+                "caparra": "10.00",
+                "pubblicata": "on",
+                "_save": "Salva",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        attivita = Attivita.objects.get(nome="Uscita a Y-40")
+        self.assertEqual(attivita.caparra, 10)

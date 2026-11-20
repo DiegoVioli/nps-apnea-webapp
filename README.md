@@ -73,6 +73,8 @@ fino a quando lo staff la conferma da **Amministrazione > Iscrizioni gare**.
 Finché resta in attesa e il termine d'iscrizione non è scaduto, il socio può
 modificare la dichiarazione dalla propria area. La conferma invia un'email; se
 l'invio fallisce, lo staff può riprovare con l'azione di reinvio nell'admin.
+Il socio può annullare la richiesta entro la data impostata dall'admin come
+termine di disiscrizione; dopo tale data l'annullamento non è disponibile.
 Lo staff può anche aggiungere manualmente un socio attivo da
 **Amministrazione > Iscrizioni gare**, selezionando gara e dichiarazione; la
 nuova iscrizione resta in attesa fino alla conferma con l'azione dell'admin.
@@ -85,6 +87,33 @@ da riprovare.
 Le gare concluse e confermate compaiono nello storico del socio, che può
 inserire e aggiornare i risultati personali (distanza, profondità e tempo).
 Applicare la migration prima di distribuire la funzionalità:
+
+```powershell
+python manage.py migrate
+```
+
+## Iscrizioni, annullamenti e uscite
+
+Lo staff deve impostare il termine di disiscrizione per ogni nuova edizione di
+corso, offerta stagionale e gara. Per le edizioni dei corsi va inoltre
+specificato il termine d'iscrizione. I soci possono iscriversi ai corsi e alle
+attività pubblicate dalla dashboard; possono annullare le iscrizioni entro la
+data limite indicata. La data limite è inclusiva. Dopo la scadenza il sistema
+blocca l'annullamento; entro il termine la caparra è rimborsabile, mentre
+superata la scadenza l'eventuale caparra è persa in caso di rinuncia o mancata
+partecipazione. I rimborsi sono gestiti manualmente dalla segreteria.
+
+Lo staff può censire uscite al mare, al lago, a Y-40 e altre iniziative da
+**Amministrazione > Attività**, specificando nome, data, luogo, termini
+d'iscrizione e disiscrizione, quota ed eventuale caparra. Le attività
+pubblicate compaiono nella dashboard dei soci, che possono iscriversi entro il
+termine previsto. Le iscrizioni annullate e la data di annullamento restano
+consultabili dall'admin; le caparre sono indicate sull'attività e gli eventuali
+rimborsi vanno gestiti manualmente fuori dal sistema, senza pagamenti automatici.
+
+Le iscrizioni ai corsi precedenti alla migration sono trasferite nel nuovo
+storico senza perdere i soci iscritti. Applicare le migration prima di
+distribuire la funzionalità:
 
 ```powershell
 python manage.py migrate

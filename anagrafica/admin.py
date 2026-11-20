@@ -9,9 +9,11 @@ from datetime import date, timedelta
 from .gare import conferma_iscrizione_gara, invia_email_conferma_gara
 from .models import (
     ConsensoSocio,
+    Attivita,
     DichiarazioneGara,
     Gara,
     IscrizioneGara,
+    IscrizioneAttivita,
     RisultatoGara,
     Socio,
     TurnoAllenamento,
@@ -19,6 +21,8 @@ from .models import (
     StagioneAbbonamento,
     Corso,
     EdizioneCorso,
+    IscrizioneAbbonamento,
+    IscrizioneCorso,
     ModificaScadenzaCertificato,
     RichiestaInformazioni,
 )
@@ -102,7 +106,9 @@ class GaraAdmin(admin.ModelAdmin):
         "nome",
         "data_gara",
         "termine_iscrizioni",
+        "termine_disiscrizione",
         "prezzo",
+        "caparra",
         "pubblicata",
     )
     list_filter = ("pubblicata", "data_gara")
@@ -133,6 +139,7 @@ class IscrizioneGaraAdmin(admin.ModelAdmin):
         "stato",
         "richiesta_il",
         "confermata_il",
+        "annullata_il",
         "certificato_valido_alla_gara",
         "email_conferma_inviata_il",
     )
@@ -382,6 +389,8 @@ class StagioneAbbonamentoAdmin(admin.ModelAdmin):
         'prezzo',
         'data_inizio',
         'data_fine',
+        'termine_disiscrizione',
+        'caparra',
         'attivo',
         'mostra_in_homepage',
         'mostra_prezzo_in_homepage',
@@ -396,18 +405,34 @@ class CorsoAdmin(admin.ModelAdmin):
 # Per gestire le singole "edizioni" dei corsi
 @admin.register(EdizioneCorso)
 class EdizioneCorsoAdmin(admin.ModelAdmin):
-    list_display = ('corso', 'data_inizio', 'data_fine', 'prezzo', 'stato', 'posti_massimi', 'numero_iscritti')
+    list_display = (
+        'corso',
+        'data_inizio',
+        'data_fine',
+        'termine_iscrizioni',
+        'termine_disiscrizione',
+        'prezzo',
+        'caparra',
+        'stato',
+        'posti_massimi',
+        'numero_iscritti',
+    )
     list_filter = ('stato', 'corso')
-    filter_horizontal = ('iscritti',)
+    readonly_fields = ('iscritti',)
+
+    @admin.display(description="Iscritti")
+    def iscritti(self, obj):
+        if not obj.pk:
+            return "Salva l'edizione per visualizzare gli iscritti."
+        soci_attivi = obj.iscritti.filter(iscrizioni_corso__stato="ATTIVA")
+        return ", ".join(str(socio) for socio in soci_attivi)
     
     # --- INIZIO NUOVO CODICE ---
     actions = ['visualizza_elenco_iscritti']
 
     @admin.display(description='N. Iscritti')
     def numero_iscritti(self, obj):
-        # 'obj' è l'istanza di EdizioneCorso per quella riga.
-        # .count() è un modo super efficiente per contare gli oggetti correlati.
-        return obj.iscritti.count()
+        return obj.iscrizioni.filter(stato="ATTIVA").count()
 
     @admin.action(description='Visualizza elenco iscritti con dati')
     def visualizza_elenco_iscritti(self, request, queryset):
@@ -417,7 +442,9 @@ class EdizioneCorsoAdmin(admin.ModelAdmin):
             return
 
         edizione = queryset.first()
-        iscritti = edizione.iscritti.all().select_related('user')
+        iscritti = edizione.iscritti.filter(
+            iscrizioni_corso__stato="ATTIVA"
+        ).select_related('user')
 
         today = date.today()
         un_mese_da_oggi = today + timedelta(days=30)
@@ -434,3 +461,48 @@ class EdizioneCorsoAdmin(admin.ModelAdmin):
         html_string = render_to_string('admin/elenco_iscritti.html', context)
         
         return HttpResponse(html_string)
+
+
+@admin.register(Attivita)
+class AttivitaAdmin(admin.ModelAdmin):
+    list_display = (
+        "nome",
+        "tipo",
+        "data",
+        "luogo",
+        "termine_iscrizioni",
+        "termine_disiscrizione",
+        "prezzo",
+        "caparra",
+        "pubblicata",
+    )
+    list_filter = ("tipo", "pubblicata", "data")
+    search_fields = ("nome", "luogo", "descrizione")
+
+
+@admin.register(IscrizioneAttivita)
+class IscrizioneAttivitaAdmin(admin.ModelAdmin):
+    list_display = ("attivita", "socio", "stato", "data_iscrizione", "annullata_il")
+    list_filter = ("stato", "attivita")
+    search_fields = ("attivita__nome", "socio__user__first_name", "socio__user__last_name")
+    readonly_fields = ("data_iscrizione", "annullata_il")
+
+
+@admin.register(IscrizioneCorso)
+class IscrizioneCorsoAdmin(admin.ModelAdmin):
+    list_display = ("edizione", "socio", "stato", "data_iscrizione", "annullata_il")
+    list_filter = ("stato", "edizione__corso")
+    search_fields = ("edizione__corso__nome", "socio__user__first_name", "socio__user__last_name")
+    readonly_fields = ("data_iscrizione", "annullata_il")
+
+
+@admin.register(IscrizioneAbbonamento)
+class IscrizioneAbbonamentoAdmin(admin.ModelAdmin):
+    list_display = ("abbonamento", "socio", "stato", "data_iscrizione", "annullata_il")
+    list_filter = ("stato", "abbonamento__stagione")
+    search_fields = (
+        "abbonamento__pacchetto__nome",
+        "socio__user__first_name",
+        "socio__user__last_name",
+    )
+    readonly_fields = ("data_iscrizione", "annullata_il")

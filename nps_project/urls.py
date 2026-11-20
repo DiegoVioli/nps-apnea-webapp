@@ -26,6 +26,7 @@ from anagrafica.views import (
     consensi_socio,
     dashboard,
     homepage,
+    annulla_iscrizione,
     modifica_dichiarazione_gara,
     modifica_risultati_gara,
     modifica_scadenza_certificato,
@@ -33,6 +34,8 @@ from anagrafica.views import (
     richiesta_informazioni,
     richiesta_informazioni_confermata,
     registrazione_socio,
+    richiedi_iscrizione_attivita,
+    richiedi_iscrizione_corso,
     richiedi_iscrizione_gara,
     sottoscrivi_abbonamento,
 )
@@ -56,6 +59,21 @@ urlpatterns = [
     ),
 
     path('dashboard/', dashboard, name='dashboard'),
+    path(
+        "iscrizioni/<str:tipo>/<int:iscrizione_id>/annulla/",
+        annulla_iscrizione,
+        name="annulla_iscrizione",
+    ),
+    path(
+        "corsi/<int:edizione_id>/iscrizione/",
+        richiedi_iscrizione_corso,
+        name="richiedi_iscrizione_corso",
+    ),
+    path(
+        "attivita/<int:attivita_id>/iscrizione/",
+        richiedi_iscrizione_attivita,
+        name="richiedi_iscrizione_attivita",
+    ),
     path(
         "gare/<int:gara_id>/iscrizione/",
         richiedi_iscrizione_gara,

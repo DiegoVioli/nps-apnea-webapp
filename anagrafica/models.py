@@ -201,6 +201,18 @@ class StagioneAbbonamento(models.Model):
     prezzo = models.DecimalField(max_digits=6, decimal_places=2)
     data_inizio = models.DateField()
     data_fine = models.DateField()
+    termine_disiscrizione = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Disiscrizioni entro",
+    )
+    caparra = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Caparra (€)",
+    )
     attivo = models.BooleanField(default=True, help_text="Se attivo, questa offerta stagionale è acquistabile")
     mostra_in_homepage = models.BooleanField(
         default=False,
@@ -215,6 +227,25 @@ class StagioneAbbonamento(models.Model):
 
     def __str__(self):
         return f"{self.pacchetto.nome} ({self.stagione})"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        errors = {}
+        if self.termine_disiscrizione is None:
+            errors["termine_disiscrizione"] = (
+                "Specifica il termine entro cui è possibile disiscriversi."
+            )
+        elif self.data_inizio and self.termine_disiscrizione > self.data_inizio:
+            errors["termine_disiscrizione"] = (
+                "Il termine delle disiscrizioni non può essere successivo "
+                "all'inizio dell'abbonamento."
+            )
+        if self.caparra is not None and self.caparra < 0:
+            errors["caparra"] = "La caparra non può essere negativa."
+        if errors:
+            raise ValidationError(errors)
             
     class Meta:
         verbose_name = "Offerta Abbonamento Stagionale"
@@ -222,6 +253,11 @@ class StagioneAbbonamento(models.Model):
 
 
 class IscrizioneAbbonamento(models.Model):
+    STATI = (
+        ("ATTIVA", "Attiva"),
+        ("ANNULLATA", "Annullata"),
+    )
+
     socio = models.ForeignKey(
         Socio, on_delete=models.CASCADE, related_name="iscrizioni_abbonamento"
     )
@@ -229,6 +265,8 @@ class IscrizioneAbbonamento(models.Model):
         StagioneAbbonamento, on_delete=models.CASCADE, related_name="iscrizioni_soci"
     )
     data_iscrizione = models.DateTimeField(auto_now_add=True)
+    stato = models.CharField(max_length=20, choices=STATI, default="ATTIVA")
+    annullata_il = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -259,17 +297,64 @@ class EdizioneCorso(models.Model):
     ]
     # RELAZIONI CORRETTE CON STRINGA
     corso = models.ForeignKey('Corso', on_delete=models.CASCADE, related_name="edizioni")
-    iscritti = models.ManyToManyField('Socio', related_name="corsi_iscritti", blank=True)
-    
     data_inizio = models.DateField()
     data_fine = models.DateField()
+    termine_iscrizioni = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Iscrizioni entro",
+    )
+    termine_disiscrizione = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Disiscrizioni entro",
+    )
     posti_massimi = models.PositiveIntegerField()
     numero_minimo_partecipanti = models.PositiveIntegerField(default=4)
     prezzo = models.DecimalField(max_digits=6, decimal_places=2)
+    caparra = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Caparra (€)",
+    )
     stato = models.CharField(max_length=20, choices=STATO_CORSO_CHOICES, default='APERTO_ISCRIZIONI')
+    iscritti = models.ManyToManyField(
+        "Socio",
+        related_name="corsi_iscritti",
+        blank=True,
+        through="IscrizioneCorso",
+    )
 
     def __str__(self):
         return f"{self.corso.nome} - dal {self.data_inizio}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        errors = {}
+        if self.termine_iscrizioni is None:
+            errors["termine_iscrizioni"] = "Specifica il termine delle iscrizioni."
+        elif self.data_inizio and self.termine_iscrizioni > self.data_inizio:
+            errors["termine_iscrizioni"] = (
+                "Il termine delle iscrizioni non può essere successivo "
+                "all'inizio del corso."
+            )
+        if self.termine_disiscrizione is None:
+            errors["termine_disiscrizione"] = (
+                "Specifica il termine entro cui è possibile disiscriversi."
+            )
+        elif self.data_inizio and self.termine_disiscrizione > self.data_inizio:
+            errors["termine_disiscrizione"] = (
+                "Il termine delle disiscrizioni non può essere successivo "
+                "all'inizio del corso."
+            )
+        if self.caparra is not None and self.caparra < 0:
+            errors["caparra"] = "La caparra non può essere negativa."
+        if errors:
+            raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         if self.data_fine < timezone.localdate() and self.stato != "ANNULLATO":
@@ -282,6 +367,143 @@ class EdizioneCorso(models.Model):
     class Meta:
         verbose_name = "Edizione di un Corso"
         verbose_name_plural = "Edizioni dei Corsi"
+
+
+class IscrizioneCorso(models.Model):
+    STATI = (
+        ("ATTIVA", "Attiva"),
+        ("ANNULLATA", "Annullata"),
+    )
+
+    socio = models.ForeignKey(
+        Socio,
+        on_delete=models.CASCADE,
+        related_name="iscrizioni_corso",
+    )
+    edizione = models.ForeignKey(
+        EdizioneCorso,
+        on_delete=models.CASCADE,
+        related_name="iscrizioni",
+    )
+    data_iscrizione = models.DateTimeField(auto_now_add=True)
+    stato = models.CharField(max_length=20, choices=STATI, default="ATTIVA")
+    annullata_il = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("socio", "edizione"),
+                name="unique_socio_edizione_corso",
+            )
+        ]
+        verbose_name = "Iscrizione corso"
+        verbose_name_plural = "Iscrizioni corsi"
+
+    def __str__(self):
+        return f"{self.socio} - {self.edizione}"
+
+
+class Attivita(models.Model):
+    TIPI = (
+        ("USCITA_MARE", "Uscita al mare"),
+        ("USCITA_LAGO", "Uscita al lago"),
+        ("Y40", "Uscita a Y-40"),
+        ("ALTRO", "Altra attività"),
+    )
+
+    nome = models.CharField(max_length=150)
+    tipo = models.CharField(max_length=20, choices=TIPI, default="ALTRO")
+    descrizione = models.TextField(blank=True)
+    data = models.DateField(verbose_name="Data attività")
+    luogo = models.CharField(max_length=200)
+    termine_iscrizioni = models.DateField(verbose_name="Iscrizioni entro")
+    termine_disiscrizione = models.DateField(verbose_name="Disiscrizioni entro")
+    prezzo = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=0,
+        verbose_name="Quota (€)",
+    )
+    caparra = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Caparra (€)",
+    )
+    pubblicata = models.BooleanField(
+        default=True,
+        verbose_name="Pubblicata",
+    )
+
+    class Meta:
+        ordering = ("data", "nome")
+        verbose_name = "Attività"
+        verbose_name_plural = "Attività"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        errors = {}
+        if self.data and self.termine_iscrizioni and self.termine_iscrizioni > self.data:
+            errors["termine_iscrizioni"] = (
+                "Il termine delle iscrizioni non può essere successivo "
+                "alla data dell'attività."
+            )
+        if (
+            self.data
+            and self.termine_disiscrizione
+            and self.termine_disiscrizione > self.data
+        ):
+            errors["termine_disiscrizione"] = (
+                "Il termine delle disiscrizioni non può essere successivo "
+                "alla data dell'attività."
+            )
+        if self.prezzo is not None and self.prezzo < 0:
+            errors["prezzo"] = "La quota non può essere negativa."
+        if self.caparra is not None and self.caparra < 0:
+            errors["caparra"] = "La caparra non può essere negativa."
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return self.nome
+
+
+class IscrizioneAttivita(models.Model):
+    STATI = (
+        ("ATTIVA", "Attiva"),
+        ("ANNULLATA", "Annullata"),
+    )
+
+    socio = models.ForeignKey(
+        Socio,
+        on_delete=models.CASCADE,
+        related_name="iscrizioni_attivita",
+    )
+    attivita = models.ForeignKey(
+        Attivita,
+        on_delete=models.CASCADE,
+        related_name="iscrizioni",
+    )
+    data_iscrizione = models.DateTimeField(auto_now_add=True)
+    stato = models.CharField(max_length=20, choices=STATI, default="ATTIVA")
+    annullata_il = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("socio", "attivita"),
+                condition=models.Q(stato="ATTIVA"),
+                name="unique_active_socio_attivita",
+            )
+        ]
+        verbose_name = "Iscrizione attività"
+        verbose_name_plural = "Iscrizioni attività"
+
+    def __str__(self):
+        return f"{self.socio} - {self.attivita}"
 
 
 class Gara(models.Model):
@@ -304,6 +526,18 @@ class Gara(models.Model):
         max_digits=8,
         decimal_places=2,
         verbose_name="Quota di iscrizione (€)",
+    )
+    caparra = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Caparra (€)",
+    )
+    termine_disiscrizione = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name="Disiscrizioni entro",
     )
     discipline = models.JSONField(default=list, verbose_name="Discipline")
     pubblicata = models.BooleanField(
@@ -349,6 +583,25 @@ class Gara(models.Model):
                 )
         if self.prezzo is not None and self.prezzo < 0:
             raise ValidationError({"prezzo": "Il prezzo non può essere negativo."})
+        if self.caparra is not None and self.caparra < 0:
+            raise ValidationError({"caparra": "La caparra non può essere negativa."})
+        if self.termine_disiscrizione is None:
+            raise ValidationError(
+                {
+                    "termine_disiscrizione": (
+                        "Specifica il termine entro cui è possibile disiscriversi."
+                    )
+                }
+            )
+        if self.termine_disiscrizione > self.data_gara:
+            raise ValidationError(
+                {
+                    "termine_disiscrizione": (
+                        "Il termine delle disiscrizioni non può essere "
+                        "successivo alla data della gara."
+                    )
+                }
+            )
 
     @property
     def discipline_display(self):
@@ -367,6 +620,7 @@ class IscrizioneGara(models.Model):
     STATI = (
         ("IN_ATTESA", "In attesa di conferma"),
         ("ISCRITTO", "Iscritto"),
+        ("ANNULLATA", "Annullata"),
     )
 
     socio = models.ForeignKey(
@@ -386,6 +640,7 @@ class IscrizioneGara(models.Model):
     )
     richiesta_il = models.DateTimeField(auto_now_add=True)
     confermata_il = models.DateTimeField(null=True, blank=True)
+    annullata_il = models.DateTimeField(null=True, blank=True)
     email_conferma_inviata_il = models.DateTimeField(null=True, blank=True)
 
     class Meta:

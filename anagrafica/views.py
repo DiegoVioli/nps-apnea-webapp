@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied
 from django.core.mail import EmailMessage
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Count, Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -35,10 +35,13 @@ from .forms import (
     SocioRegistrationForm,
 )
 from .models import (
+    Attivita,
     ConsensoSocio,
     DichiarazioneGara,
     EdizioneCorso,
     Gara,
+    IscrizioneAttivita,
+    IscrizioneCorso,
     IscrizioneGara,
     IscrizioneAbbonamento,
     ModificaScadenzaCertificato,
@@ -278,23 +281,102 @@ def dashboard(request):
     abbonamenti_disponibili = StagioneAbbonamento.objects.filter(
         attivo=True,
         data_fine__gte=oggi,
+    ).exclude(
+        iscrizioni_soci__socio=socio,
+        iscrizioni_soci__stato="ANNULLATA",
     )
 
-    edizioni_aperte = EdizioneCorso.objects.filter(
-        stato='APERTO_ISCRIZIONI',
-        data_fine__gte=oggi,
+    edizioni_aperte = list(
+        EdizioneCorso.objects.filter(
+            stato='APERTO_ISCRIZIONI',
+            data_fine__gte=oggi,
+        )
+        .select_related("corso")
+        .annotate(
+            iscritti_attivi_count=Count(
+                "iscrizioni",
+                filter=Q(iscrizioni__stato="ATTIVA"),
+            )
+        )
+        .prefetch_related(
+            Prefetch(
+                "iscrizioni",
+                queryset=IscrizioneCorso.objects.filter(socio=socio),
+                to_attr="iscrizioni_del_socio",
+            )
+        )
     )
+    for edizione in edizioni_aperte:
+        edizione.iscrivibile = (
+            socio.stato == "ATTIVO"
+            and not edizione.iscrizioni_del_socio
+            and edizione.termine_iscrizioni is not None
+            and edizione.termine_iscrizioni >= oggi
+            and edizione.iscritti_attivi_count < edizione.posti_massimi
+        )
+    edizioni_aperte.sort(
+        key=lambda edizione: (
+            not edizione.iscrivibile,
+            edizione.data_inizio,
+            edizione.corso.nome,
+        )
+    )
+
+    attivita_disponibili = list(
+        Attivita.objects.filter(
+            pubblicata=True,
+            data__gte=oggi,
+        ).prefetch_related(
+            Prefetch(
+                "iscrizioni",
+                queryset=IscrizioneAttivita.objects.filter(socio=socio).order_by(
+                    "-data_iscrizione", "-pk"
+                ),
+                to_attr="iscrizioni_del_socio",
+            )
+        )
+    )
+    for attivita in attivita_disponibili:
+        attivita.iscrizioni_aperte = attivita.termine_iscrizioni >= oggi
+        attivita.iscrivibile = (
+            socio.stato == "ATTIVO"
+            and attivita.iscrizioni_aperte
+            and not any(
+                iscrizione.stato == "ATTIVA"
+                for iscrizione in attivita.iscrizioni_del_socio
+            )
+        )
+    attivita_disponibili.sort(
+        key=lambda attivita: (
+            not attivita.iscrivibile,
+            attivita.data,
+            attivita.nome,
+        )
+    )
+
     iscrizioni_storiche_corsi = (
         socio.corsi_iscritti.filter(
-            Q(stato='CONCLUSO') | Q(data_fine__lt=oggi)
+            Q(stato='CONCLUSO')
+            | Q(data_fine__lt=oggi)
+            | Q(iscrizioni__stato="ANNULLATA")
         )
         .select_related('corso')
         .order_by('-data_fine', 'corso__nome')
     )
     iscrizioni_storiche_abbonamenti = (
-        socio.iscrizioni_abbonamento.filter(abbonamento__data_fine__lt=oggi)
+        socio.iscrizioni_abbonamento.filter(
+            Q(abbonamento__data_fine__lt=oggi) | Q(stato="ANNULLATA")
+        )
         .select_related('abbonamento__pacchetto')
         .order_by('-abbonamento__data_fine')
+    )
+    iscrizione_abbonamento_attiva = (
+        socio.iscrizioni_abbonamento.filter(
+            stato="ATTIVA",
+            abbonamento__data_fine__gte=oggi,
+        )
+        .select_related("abbonamento__pacchetto")
+        .first()
     )
     gare_prossime = Gara.objects.none()
     if socio.stato == "ATTIVO":
@@ -325,6 +407,20 @@ def dashboard(request):
         }
         for gara in gare_prossime
     ]
+    for elemento in gare_dashboard:
+        elemento["iscrivibile"] = (
+            socio.stato == "ATTIVO"
+            and elemento["iscrizione"] is None
+            and elemento["gara"].termine_iscrizioni >= oggi
+            and elemento["certificato_valido"]
+        )
+    gare_dashboard.sort(
+        key=lambda elemento: (
+            not elemento["iscrivibile"],
+            elemento["gara"].data_gara,
+            elemento["gara"].nome,
+        )
+    )
     iscrizioni_gare_passate = list(
         socio.iscrizioni_gara.filter(
             stato="ISCRITTO",
@@ -340,16 +436,16 @@ def dashboard(request):
 
     context = {
         'socio': socio,
+        "oggi": oggi,
         'abbonamenti_disponibili': abbonamenti_disponibili,
-        'abbonamento_attivo': (
-            socio.abbonamento_sottoscritto
-            if (
-                socio.abbonamento_sottoscritto
-                and socio.abbonamento_sottoscritto.data_fine >= oggi
-            )
+        "iscrizione_abbonamento_attiva": iscrizione_abbonamento_attiva,
+        "abbonamento_attivo": (
+            iscrizione_abbonamento_attiva.abbonamento
+            if iscrizione_abbonamento_attiva
             else None
         ),
         'edizioni_aperte': edizioni_aperte,
+        "attivita_disponibili": attivita_disponibili,
         'iscrizioni_storiche_abbonamenti': iscrizioni_storiche_abbonamenti,
         'iscrizioni_storiche_corsi': iscrizioni_storiche_corsi,
         "gare_prossime": gare_dashboard,
@@ -357,6 +453,153 @@ def dashboard(request):
         "grafici_performance": grafici_performance,
     }
     return render(request, 'dashboard.html', context)
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def richiedi_iscrizione_corso(request, edizione_id):
+    socio = get_object_or_404(Socio, user=request.user)
+    if socio.stato != "ATTIVO":
+        messages.error(request, "Solo i soci attivi possono iscriversi ai corsi.")
+        return redirect("dashboard")
+    if consensi_mancanti(socio):
+        return redirect("consensi")
+
+    edizione = get_object_or_404(
+        EdizioneCorso.objects.select_for_update(),
+        pk=edizione_id,
+        stato="APERTO_ISCRIZIONI",
+    )
+    oggi = timezone.localdate()
+    if (
+        edizione.data_fine < oggi
+        or edizione.termine_iscrizioni is None
+        or edizione.termine_iscrizioni < oggi
+    ):
+        messages.error(request, "Le iscrizioni a questo corso sono chiuse.")
+        return redirect("dashboard")
+
+    esistente = IscrizioneCorso.objects.filter(
+        socio=socio,
+        edizione=edizione,
+    ).first()
+    if esistente:
+        messages.info(request, "Risulti già iscritto a questo corso.")
+        return redirect("dashboard")
+    if edizione.iscrizioni.filter(stato="ATTIVA").count() >= edizione.posti_massimi:
+        messages.error(request, "Non ci sono più posti disponibili per questo corso.")
+        return redirect("dashboard")
+
+    IscrizioneCorso.objects.create(socio=socio, edizione=edizione)
+    messages.success(request, "Iscrizione al corso completata.")
+    return redirect("dashboard")
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def richiedi_iscrizione_attivita(request, attivita_id):
+    socio = get_object_or_404(Socio, user=request.user)
+    if socio.stato != "ATTIVO":
+        messages.error(request, "Solo i soci attivi possono iscriversi alle attività.")
+        return redirect("dashboard")
+    if consensi_mancanti(socio):
+        return redirect("consensi")
+
+    attivita = get_object_or_404(
+        Attivita.objects.select_for_update(),
+        pk=attivita_id,
+        pubblicata=True,
+    )
+    oggi = timezone.localdate()
+    if attivita.data < oggi or attivita.termine_iscrizioni < oggi:
+        messages.error(request, "Le iscrizioni a questa attività sono chiuse.")
+        return redirect("dashboard")
+    if IscrizioneAttivita.objects.filter(
+        socio=socio,
+        attivita=attivita,
+        stato="ATTIVA",
+    ).exists():
+        messages.info(request, "Risulti già iscritto a questa attività.")
+        return redirect("dashboard")
+
+    IscrizioneAttivita.objects.create(socio=socio, attivita=attivita)
+    messages.success(request, "Iscrizione all'attività completata.")
+    return redirect("dashboard")
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def annulla_iscrizione(request, tipo, iscrizione_id):
+    socio = get_object_or_404(Socio, user=request.user)
+    oggi = timezone.localdate()
+    adesso = timezone.now()
+    if tipo == "corso":
+        iscrizione = get_object_or_404(
+            IscrizioneCorso.objects.select_for_update().select_related("edizione"),
+            pk=iscrizione_id,
+            socio=socio,
+            stato="ATTIVA",
+        )
+        termine = iscrizione.edizione.termine_disiscrizione
+    elif tipo == "abbonamento":
+        iscrizione = get_object_or_404(
+            IscrizioneAbbonamento.objects.select_for_update().select_related(
+                "abbonamento"
+            ),
+            pk=iscrizione_id,
+            socio=socio,
+            stato="ATTIVA",
+        )
+        termine = iscrizione.abbonamento.termine_disiscrizione
+    elif tipo == "gara":
+        iscrizione = get_object_or_404(
+            IscrizioneGara.objects.select_for_update().select_related("gara"),
+            pk=iscrizione_id,
+            socio=socio,
+        )
+        if iscrizione.stato == "ANNULLATA":
+            messages.info(request, "L'iscrizione risulta già annullata.")
+            return redirect("dashboard")
+        termine = iscrizione.gara.termine_disiscrizione
+    elif tipo == "attivita":
+        iscrizione = get_object_or_404(
+            IscrizioneAttivita.objects.select_for_update().select_related(
+                "attivita"
+            ),
+            pk=iscrizione_id,
+            socio=socio,
+            stato="ATTIVA",
+        )
+        termine = iscrizione.attivita.termine_disiscrizione
+    else:
+        raise Http404
+
+    if termine is None or oggi > termine:
+        messages.error(
+            request,
+            "Il termine per annullare l'iscrizione è scaduto; "
+            "l'eventuale caparra non è più rimborsabile.",
+        )
+        return redirect("dashboard")
+
+    iscrizione.stato = "ANNULLATA"
+    iscrizione.annullata_il = adesso
+    iscrizione.save(update_fields=("stato", "annullata_il"))
+    if tipo == "abbonamento":
+        Socio.objects.filter(
+            pk=socio.pk,
+            abbonamento_sottoscritto=iscrizione.abbonamento,
+        ).update(abbonamento_sottoscritto=None)
+
+    messages.success(
+        request,
+        "Iscrizione annullata. L'eventuale rimborso della caparra va gestito "
+        "manualmente dalla segreteria.",
+    )
+    return redirect("dashboard")
 
 
 @login_required
@@ -645,10 +888,17 @@ def sottoscrivi_abbonamento(request, abbonamento_id):
     ):
         return redirect('dashboard')
 
-    IscrizioneAbbonamento.objects.get_or_create(
+    iscrizione, creata = IscrizioneAbbonamento.objects.get_or_create(
         socio=socio,
         abbonamento=abbonamento_scelto,
     )
+    if not creata and iscrizione.stato == "ANNULLATA":
+        messages.error(
+            request,
+            "L'iscrizione a questa offerta è già stata annullata e non può "
+            "essere riattivata.",
+        )
+        return redirect("dashboard")
     socio.abbonamento_sottoscritto = abbonamento_scelto
     socio.save()
 

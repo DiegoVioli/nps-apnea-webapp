@@ -43,8 +43,9 @@ class Command(BaseCommand):
             Socio.objects.filter(user__isnull=False)
             .filter(
                 Q(
-                    corsi_iscritti__stato__in=STATI_CORSO_ATTIVI,
-                    corsi_iscritti__data_fine__gte=oggi,
+                    iscrizioni_corso__stato="ATTIVA",
+                    iscrizioni_corso__edizione__stato__in=STATI_CORSO_ATTIVI,
+                    iscrizioni_corso__edizione__data_fine__gte=oggi,
                 )
                 | Q(abbonamento_sottoscritto__data_fine__gte=oggi)
             )
