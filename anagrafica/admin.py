@@ -506,3 +506,9 @@ class IscrizioneAbbonamentoAdmin(admin.ModelAdmin):
         "socio__user__last_name",
     )
     readonly_fields = ("data_iscrizione", "annullata_il")
+
+from django.contrib import admin
+from .admin_export import esporta_in_excel
+
+# Abilita l'esportazione Excel su TUTTI gli elenchi di Django Admin
+admin.site.add_action(esporta_in_excel)
