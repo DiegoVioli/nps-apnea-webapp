@@ -82,6 +82,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -158,6 +159,15 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
+
 # Production security defaults. Set USE_X_FORWARDED_PROTO only when a trusted
 # reverse proxy overwrites X-Forwarded-Proto before forwarding requests.
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)
@@ -167,9 +177,9 @@ SECURE_HSTS_SECONDS = int(
     os.environ.get("SECURE_HSTS_SECONDS", "31536000" if not DEBUG else "0")
 )
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
-    "SECURE_HSTS_INCLUDE_SUBDOMAINS", False
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS", not DEBUG
 )
-SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
+SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", not DEBUG)
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 if env_bool("USE_X_FORWARDED_PROTO", False):
